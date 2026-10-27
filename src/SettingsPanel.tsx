@@ -4,6 +4,13 @@ import { FC, useEffect, useState } from "react";
 import { FluxerState, refreshState, setMenuEntryEnabled } from "./state";
 import { DANGER, ONLINE, Tile } from "./ui";
 
+interface Diagnostics {
+  running: boolean;
+  fluxer_version: string | null;
+  capabilities: { name: string; ok: boolean; error?: string }[];
+  error?: string;
+}
+
 interface PluginSettings {
   autostart: boolean;
   menu_entry: boolean;
@@ -52,6 +59,14 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const ready = !!state?.ready;
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  useEffect(() => {
+    if (!ready) {
+      setDiag(null);
+      return;
+    }
+    call<[], Diagnostics>("get_diagnostics").then(setDiag).catch(() => setDiag(null));
+  }, [ready]);
 
   const load = () =>
     call<[], PluginSettings>("get_settings")
@@ -115,6 +130,25 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
             disabled={busy}
             onChange={(v) => set({ menu_entry: v })}
           />
+        </>
+      )}
+      {diag && (
+        <>
+          <Heading>Compatibility{diag.fluxer_version ? ` · Fluxer ${diag.fluxer_version}` : ""}</Heading>
+          {diag.capabilities.length > 0 && diag.capabilities.every((c) => c.ok) ? (
+            <div style={{ fontSize: 12, color: ONLINE, margin: "0 4px" }}>All features work with this version of Fluxer.</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, opacity: 0.7, margin: "0 4px 6px" }}>
+                {diag.error ? `Check failed: ${diag.error}` : "Some features do not work with this version of Fluxer (it may have been updated). The rest keep working."}
+              </div>
+              {diag.capabilities.filter((c) => !c.ok).map((c) => (
+                <div key={c.name} style={{ fontSize: 12, margin: "0 4px 3px", color: DANGER }}>
+                  {c.name}: unavailable
+                </div>
+              ))}
+            </>
+          )}
         </>
       )}
       {note && <div style={{ color: DANGER, margin: "8px 4px" }}>{note}</div>}

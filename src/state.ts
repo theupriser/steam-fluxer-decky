@@ -52,6 +52,8 @@ export interface FluxerDm {
 
 export interface FluxerState {
   installed?: boolean;
+  fluxer_version?: string | null;
+  problems?: { part: string; error: string }[];
   running: boolean;
   ready: boolean;
   logged_in: boolean;

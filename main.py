@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -17,7 +18,7 @@ import tarfile
 from typing import Any, Optional
 
 import decky  # type: ignore
-from aiohttp import ClientSession, ClientTimeout, WSMsgType  # type: ignore
+from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType  # type: ignore
 
 BRIDGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults", "bridge.js")
 CDP_PORT = 9224
@@ -98,15 +99,22 @@ class CdpError(Exception):
     pass
 
 
+# Failures worth one more try: the page was reloading or the socket dropped.
+TRANSIENT = ("ws_closed", "no_app_page", "Execution context was destroyed", "Cannot find context")
+EVAL_TIMEOUT = 15
+
+
 class Plugin:
     _proc: Optional[subprocess.Popen] = None
     _session: Optional[ClientSession] = None
     _install: dict = {"stage": "idle", "pct": 0, "error": None}
+    _lock: Optional[asyncio.Lock] = None
 
     # --- lifecycle -------------------------------------------------------
 
     async def _main(self):
         self._session = ClientSession(timeout=ClientTimeout(total=5))
+        self._lock = asyncio.Lock()
         decky.logger.info("Fluxer plugin loaded")
         if self._read_settings().get("autostart"):
             asyncio.create_task(self.start())
@@ -241,11 +249,47 @@ class Plugin:
         with open(BRIDGE_PATH, "r", encoding="utf-8") as f:
             return f.read()
 
+    def _bridge_version(self) -> int:
+        m = re.search(r"const VERSION = (\d+);", self._bridge_source())
+        return int(m.group(1)) if m else 0
+
     async def _bridge(self, call: str) -> Any:
-        """Evaluate a bridge call, e.g. 'state()' or 'join("123")'."""
-        return await self._evaluate(f"(async () => {{ const b = {self._bridge_source()}\n return await b.{call}; }})()")
+        """Evaluate a bridge call, e.g. 'state()' or 'join("123")'.
+
+        The bridge is injected once per page load; if the page was reloaded
+        (or Fluxer updated) it is injected again and the call retried.
+        """
+        version = self._bridge_version()
+        expr = (
+            "(async () => { const b = window.__fluxerDeck && window.__fluxerDeck.v === "
+            f"{version} ? window.__fluxerDeck : null; if (!b) return {{ __missing: true }}; return await b.{call}; }})()"
+        )
+        res = await self._evaluate(expr)
+        if isinstance(res, dict) and res.get("__missing"):
+            await self._evaluate(self._bridge_source())
+            res = await self._evaluate(expr)
+            if isinstance(res, dict) and res.get("__missing"):
+                raise CdpError("bridge_unavailable")
+        return res
 
     async def _evaluate(self, expression: str) -> Any:
+        """One CDP evaluation at a time, bounded, retried once if the page was
+        mid-reload. Serialising keeps the 3 s poll from piling up behind a slow
+        page."""
+        assert self._lock is not None
+        async with self._lock:
+            for attempt in (1, 2):
+                try:
+                    return await asyncio.wait_for(self._evaluate_once(expression), EVAL_TIMEOUT)
+                except (CdpError, ClientError, OSError, asyncio.TimeoutError) as e:
+                    transient = isinstance(e, (ClientError, OSError, asyncio.TimeoutError)) or any(t in str(e) for t in TRANSIENT)
+                    if attempt == 2 or not transient:
+                        if isinstance(e, asyncio.TimeoutError):
+                            raise CdpError("timeout") from e
+                        raise
+                    await asyncio.sleep(0.8)
+
+    async def _evaluate_once(self, expression: str) -> Any:
         ws_url = await self._page_ws_url()
         async with self._session.ws_connect(ws_url, max_msg_size=0) as ws:
             await ws.send_json(
@@ -265,7 +309,9 @@ class Plugin:
                     raise CdpError(data["error"].get("message", "cdp_error"))
                 res = data["result"]
                 if "exceptionDetails" in res:
-                    raise CdpError(res["exceptionDetails"].get("text", "js_exception"))
+                    ex = res["exceptionDetails"]
+                    desc = (ex.get("exception") or {}).get("description") or ex.get("text", "js_exception")
+                    raise CdpError(str(desc).splitlines()[0])
                 return res["result"].get("value")
         raise CdpError("ws_closed")
 
@@ -297,6 +343,8 @@ class Plugin:
             state["guilds"] = live.get("guilds", [])
             state["dms"] = live.get("dms", [])
             state["friends"] = live.get("friends", [])
+            state["problems"] = live.get("problems", [])
+            state["fluxer_version"] = live.get("fluxerVersion")
         except Exception as e:  # logged out / app still booting
             state["error"] = str(e)
         return state
@@ -308,6 +356,17 @@ class Plugin:
         except Exception as e:
             decky.logger.error(f"bridge call {call.split('(')[0]} failed: {e}")
             return {"ok": False, "error": str(e)}
+
+    async def get_diagnostics(self) -> dict:
+        """Which features this Fluxer build still supports (settings page)."""
+        if not await self._cdp_up():
+            return {"running": False, "capabilities": [], "fluxer_version": None}
+        try:
+            caps = await self._bridge("capabilities()")
+            live = await self._bridge("state()")
+            return {"running": True, "capabilities": caps, "fluxer_version": live.get("fluxerVersion")}
+        except Exception as e:
+            return {"running": True, "capabilities": [], "fluxer_version": None, "error": str(e)}
 
     async def get_friends(self) -> dict:
         return await self._bridge("friends()")
