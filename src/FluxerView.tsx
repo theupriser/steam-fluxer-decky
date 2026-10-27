@@ -58,6 +58,18 @@ const byInstance = <T extends { instanceHost: string | null }>(accounts: T[]) =>
   return [...groups.entries()];
 };
 
+const ServerIcon: FC<{ name: string; src?: string | null }> = ({ name, src }) => {
+  const [failed, setFailed] = useState(false);
+  const box = { width: 38, height: 38, borderRadius: 10, flexShrink: 0 };
+  return src && !failed ? (
+    <img src={src} width={38} height={38} onError={() => setFailed(true)} style={{ ...box, objectFit: "cover" }} />
+  ) : (
+    <span style={{ ...box, background: "linear-gradient(135deg,#4641d9,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
+      {name[0]?.toUpperCase()}
+    </span>
+  );
+};
+
 const Title: FC<{ main: string; sub?: string }> = ({ main, sub }) => (
   <div style={{ flexShrink: 0, display: "flex", alignItems: "baseline", gap: 12, borderBottom: "1px solid rgba(255,255,255,.09)", paddingBottom: 15, marginBottom: 14 }}>
     <div style={{ fontSize: 23, fontWeight: 800, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{main}</div>
@@ -169,9 +181,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
         return (
           <div key={g.id} style={{ marginBottom: 5 }}>
             <Tile flex active={here} onClick={() => setServerId(g.id)}>
-              <span style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,#4641d9,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>
-                {(g.name || "?")[0]?.toUpperCase()}
-              </span>
+              <ServerIcon name={g.name || "?"} src={g.icon} />
               <Name sub={here ? "You are in a call here" : `${g.voiceChannels.length} voice channels`} subColor={here ? ONLINE : undefined}>{g.name || g.id}</Name>
               <span style={{ opacity: 0.5 }}>›</span>
             </Tile>

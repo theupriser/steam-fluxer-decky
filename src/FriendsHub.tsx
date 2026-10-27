@@ -3,7 +3,7 @@ import { Focusable, TextField } from "@decky/ui";
 import { FC, useEffect, useRef, useState } from "react";
 import { FaComment, FaPhone, FaSyncAlt } from "react-icons/fa";
 import { FluxerPerson } from "./state";
-import { Avatar, Btn, statusText } from "./ui";
+import { Avatar, Btn, Tile, statusText } from "./ui";
 
 interface Friends {
   friends: FluxerPerson[];
@@ -50,27 +50,29 @@ const PersonRow: FC<{
   return (
     <div style={{ marginBottom: 5 }}>
       <Focusable flow-children="row" style={{ display: "flex", gap: 6 }}>
-        <Btn grow onClick={pending ? () => {} : () => withDm((id) => onChat(id, person.name))}>
+        <Tile flex onClick={pending ? () => {} : () => withDm((id) => onChat(id, person.name))}>
           <Avatar name={person.name} src={person.avatar} status={pending ? undefined : person.status} />
           <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: "block", fontWeight: 650, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{person.name}</span>
-            <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 400, opacity: 0.62 }}>{line}</span>
+            <span style={{ display: "block", marginTop: 2, fontSize: 11, opacity: 0.58 }}>{line}</span>
           </span>
           {!pending && <FaComment style={{ opacity: 0.7 }} />}
-        </Btn>
+        </Tile>
         {busy ? (
-          <Btn onClick={() => {}}>...</Btn>
+          <Tile onClick={() => {}}><span style={{ width: 104, textAlign: "center" }}>...</span></Tile>
         ) : pending === "incoming" ? (
           <>
-            <Btn onClick={() => answer("friend_accept")}>Accept</Btn>
-            <Btn onClick={() => answer("friend_remove")}>Decline</Btn>
+            <Tile onClick={() => answer("friend_accept")}><span style={{ width: 80, textAlign: "center", fontWeight: 650 }}>Accept</span></Tile>
+            <Tile onClick={() => answer("friend_remove")}><span style={{ width: 80, textAlign: "center", fontWeight: 650 }}>Decline</span></Tile>
           </>
         ) : pending === "outgoing" ? (
-          <Btn onClick={() => answer("friend_remove")}>Cancel</Btn>
+          <Tile onClick={() => answer("friend_remove")}><span style={{ width: 104, textAlign: "center", fontWeight: 650 }}>Cancel</span></Tile>
         ) : (
-          <Btn onClick={() => withDm(onCall)}>
-            <FaPhone /> Call
-          </Btn>
+          <Tile onClick={() => withDm(onCall)}>
+            <span style={{ width: 104, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontWeight: 650 }}>
+              <FaPhone /> Call
+            </span>
+          </Tile>
         )}
       </Focusable>
       {error && <div style={{ color: "#ff7474", fontSize: 12, margin: "3px 4px 0" }}>{error}</div>}

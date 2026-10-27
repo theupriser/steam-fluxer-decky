@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 5;
+  const VERSION = 6;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -54,6 +54,9 @@
     const hash = String(u.avatar).replace(/^a_/, '');
     return origin() + '/media/avatars/' + u.id + '/' + hash + '.webp?size=80';
   };
+  const iconUrl = (g) => (g && g.id && g.icon
+    ? origin() + '/media/icons/' + g.id + '/' + String(g.icon).replace(/^a_/, '') + '.webp?size=80'
+    : null);
   const FRIEND = 1;
   const DM_GROUP = 3;
   const person = (id) => {
@@ -95,7 +98,7 @@
           .filter((ch) => ch.type === GUILD_VOICE)
           .sort((a, b) => (a.position || 0) - (b.position || 0))
           .map((ch) => ({ id: ch.id, name: ch.name }));
-        return { id, name: guild && guild.name, voiceChannels };
+        return { id, name: guild && guild.name, icon: iconUrl(guild), voiceChannels };
       }).filter((x) => x.voiceChannels.length > 0);
       let channelName = null;
       if (m.channelId) {

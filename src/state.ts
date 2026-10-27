@@ -24,6 +24,7 @@ export interface VoiceState {
 export interface FluxerGuild {
   id: string;
   name: string | null;
+  icon?: string | null;
   voiceChannels: { id: string; name: string }[];
 }
 
