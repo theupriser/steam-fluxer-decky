@@ -4,7 +4,7 @@
 import { findInReactTree, getReactRoot } from "@decky/ui";
 import { FC, ReactElement } from "react";
 import { FluxerLogo } from "./FluxerLogo";
-import { useFluxerState } from "./state";
+import { useMenuEntry } from "./state";
 
 export const FLUXER_ROUTE = "/fluxer";
 
@@ -40,10 +40,11 @@ const tryApplyPatch = (): (() => void) | null => {
     } else {
       origInner = elt.type;
       elt.type = function (this: any, ...args: any[]) {
-        // Hook: re-render the menu when login state changes.
-        const state = useFluxerState();
+        // Hook: re-render the menu when the setting changes. The entry shows
+        // while logged out too: it opens the set-up and login wizard.
+        const enabled = useMenuEntry();
         const innerRet = origInner.apply(this, args);
-        if (!state?.logged_in) return innerRet;
+        if (!enabled) return innerRet;
 
         const isItem = (e: any) =>
           e?.props?.label && (e.props.onGamepadFocus || e.props.onFocus) && e.props.route && e.type?.toString;

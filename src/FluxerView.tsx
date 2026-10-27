@@ -9,6 +9,7 @@ import { ChatView } from "./ChatView";
 import { FluxerLogo } from "./FluxerLogo";
 import { FriendsHub } from "./FriendsHub";
 import { SettingsPanel } from "./SettingsPanel";
+import { SetupWizard } from "./SetupWizard";
 import { refreshState, useFluxerState } from "./state";
 import {
   Avatar, DANGER, FULL_BLEED, IconBtn, ONLINE, SIDEBAR_FIT, SidebarItem, Tile, chromeHideMarkerRef, pinTop, statusText,
@@ -97,6 +98,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const [chat, setChat] = useState<Chat | null>(null);
   const [serverId, setServerId] = useState<string | null>(null);
 
+  const needsSetup = !state?.logged_in;
   const voice = state?.voice;
   const inCall = !!voice?.channelId;
   const active = state?.accounts.find((a) => a.accountKey === state.active_account) || state?.accounts[0];
@@ -136,18 +138,12 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     settings: ["Settings", "Fluxer app and window"],
     accounts: ["Accounts", "Switch between your accounts"],
   };
-  const head: [string, string] = chat ? [chat.name, chat.sub] : titles[mode];
+  const head: [string, string] = needsSetup && mode !== "settings" ? ["Set up Fluxer", "Install and sign in"] : chat ? [chat.name, chat.sub] : titles[mode];
   const scroller = { flex: 1, minHeight: 0, overflowY: "auto" as const, padding: "4px 8px 4px 4px" };
   const column = { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" as const };
 
-  const body = !state?.ready && mode !== "settings" ? (
-    <Focusable flow-children="column" style={scroller}>
-      <div style={{ opacity: 0.65, marginBottom: 12 }}>Fluxer is not running.</div>
-      <Tile active disabled={busy} onClick={() => run("start")}>
-        <FaPhone />
-        <span style={{ fontWeight: 650 }}>{busy ? "Starting..." : "Start Fluxer"}</span>
-      </Tile>
-    </Focusable>
+  const body = needsSetup && mode !== "settings" ? (
+    <SetupWizard state={state} />
   ) : chat ? (
     <div style={column}>
       <Focusable flow-children="row" style={{ flexShrink: 0, display: "flex", marginBottom: 8 }}>

@@ -6,11 +6,14 @@ and stored local data never leave the Fluxer process.
 """
 
 import asyncio
+import glob
 import json
 import os
+import platform
 import shutil
 import signal
 import subprocess
+import tarfile
 from typing import Any, Optional
 
 import decky  # type: ignore
@@ -20,6 +23,34 @@ BRIDGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults
 CDP_PORT = 9224
 CDP_BASE = f"http://127.0.0.1:{CDP_PORT}"
 APP_URL_PREFIX = "fluxer-app://"
+# Official desktop build (tar.gz): installs without root, so it also works on a
+# read-only SteamOS root.
+FLUXER_DOWNLOAD = "https://pkgs.fluxer.com/desktop/stable/linux/{arch}/latest/tar_gz"
+
+# Runs inside the Fluxer page. Reports which login step is on screen. Never
+# reads field values.
+LOGIN_STATE_JS = """
+(() => {
+  const q = (s) => document.querySelector(s);
+  const text = document.body ? document.body.innerText : '';
+  const buttons = [...document.querySelectorAll('button')].map((b) => b.textContent.trim()).filter(Boolean);
+  const err = q('[role=alert]');
+  const error = err ? err.textContent.trim().slice(0, 200) : null;
+  if (location.pathname.startsWith('/channels')) return { step: 'logged_in' };
+  if (q('input[name=email]') && q('input[name=password]')) return { step: 'credentials', error };
+  if (/Choose your defaults/i.test(text)) return { step: 'language' };
+  if (/Choose your instance/i.test(text)) {
+    const instances = [...document.querySelectorAll('button')]
+      .filter((b) => b.innerText.trim() && !/Add another instance/i.test(b.innerText) && b.innerText.trim() !== 'Continue')
+      .map((b) => { const [name, host] = b.innerText.trim().split('\\n'); return { name, host: host || name }; });
+    return { step: 'instance', instances, adding: !!q('input'), error };
+  }
+  if (/Sign in with email/i.test(text)) return { step: 'method' };
+  if (q('input') && /code|authenticat|verif/i.test(text)) return { step: 'mfa', error };
+  return { step: 'unknown', text: text.slice(0, 160) };
+})()
+"""
+
 
 # Runs inside the Fluxer page. Returns ONLY non-secret fields: the stored
 # records also hold tokens (localStorageData / managedStorageData).
@@ -70,6 +101,7 @@ class CdpError(Exception):
 class Plugin:
     _proc: Optional[subprocess.Popen] = None
     _session: Optional[ClientSession] = None
+    _install: dict = {"stage": "idle", "pct": 0, "error": None}
 
     # --- lifecycle -------------------------------------------------------
 
@@ -88,10 +120,27 @@ class Plugin:
 
     # --- process control -------------------------------------------------
 
+    def _install_dir(self) -> str:
+        return os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, "fluxer")
+
+    def _find_binary(self) -> tuple[Optional[str], bool]:
+        """(path, managed): a system install wins over the plugin's own copy."""
+        system = shutil.which("fluxer") or ("/usr/bin/fluxer" if os.path.exists("/usr/bin/fluxer") else None)
+        if system:
+            return system, False
+        builds = sorted(glob.glob(os.path.join(self._install_dir(), "Fluxer-*", "fluxer")))
+        if builds and os.access(builds[-1], os.X_OK):
+            return builds[-1], True
+        return None, False
+
     def _fluxer_command(self) -> list[str]:
-        binary = shutil.which("fluxer") or "/usr/bin/fluxer"
+        binary, managed = self._find_binary()
+        binary = binary or "/usr/bin/fluxer"
         # --autostart + the app's own startMinimized setting = window created hidden.
         cmd = [binary, "--autostart", "--ozone-platform=x11", f"--remote-debugging-port={CDP_PORT}"]
+        if managed:
+            # The extracted chrome-sandbox is not setuid root.
+            cmd.append("--no-sandbox")
         # Decky may run as root; Fluxer must run as the desktop user.
         if os.getuid() == 0 and decky.DECKY_USER:
             cmd = ["runuser", "-u", decky.DECKY_USER, "--"] + cmd
@@ -223,7 +272,7 @@ class Plugin:
     # --- state for the frontend -----------------------------------------
 
     async def get_state(self) -> dict:
-        state: dict = {"running": False, "ready": False, "logged_in": False, "accounts": [], "error": None}
+        state: dict = {"running": False, "ready": False, "logged_in": False, "accounts": [], "error": None, "installed": self._find_binary()[0] is not None}
         if not await self._cdp_up():
             return state
         state["running"] = True
@@ -284,6 +333,175 @@ class Plugin:
     async def send_message(self, channel_id: str, content: str) -> dict:
         return await self._act(f"send({json.dumps(channel_id)}, {json.dumps(content)})")
 
+    # --- install -----------------------------------------------------------
+
+    async def install_status(self) -> dict:
+        path, managed = self._find_binary()
+        return {"installed": path is not None, "managed": managed, **self._install}
+
+    def _extract(self, archive: str, dest: str):
+        os.makedirs(dest, exist_ok=True)
+        with tarfile.open(archive, "r:gz") as tar:
+            base = os.path.realpath(dest)
+            for m in tar.getmembers():
+                if not os.path.realpath(os.path.join(dest, m.name)).startswith(base + os.sep):
+                    raise ValueError(f"unsafe path in archive: {m.name}")
+            tar.extractall(dest)
+
+    async def install_fluxer(self, source: Optional[str] = None) -> dict:
+        """Download and unpack the official Linux build into the plugin's own dir.
+
+        `source` (a local .tar.gz) is for offline installs and tests.
+        """
+        if self._install.get("stage") in ("download", "extract"):
+            return {"ok": False, "error": "already_installing"}
+        dest = self._install_dir()
+        archive = source or os.path.join(dest, "download.tar.gz")
+        self._install = {"stage": "download", "pct": 0, "error": None}
+        try:
+            os.makedirs(dest, exist_ok=True)
+            if not source:
+                arch = "arm64" if platform.machine() in ("aarch64", "arm64") else "x64"
+                timeout = ClientTimeout(total=None, sock_connect=15, sock_read=60)
+                async with ClientSession(timeout=timeout) as session:
+                    async with session.get(FLUXER_DOWNLOAD.format(arch=arch)) as r:
+                        if r.status != 200:
+                            raise RuntimeError(f"download failed (HTTP {r.status})")
+                        total = int(r.headers.get("Content-Length") or 0)
+                        done = 0
+                        with open(archive, "wb") as f:
+                            async for chunk in r.content.iter_chunked(1 << 20):
+                                f.write(chunk)
+                                done += len(chunk)
+                                if total:
+                                    self._install["pct"] = int(done * 100 / total)
+            self._install.update(stage="extract", pct=100)
+            await asyncio.to_thread(self._extract, archive, dest)
+            if not source and os.path.exists(archive):
+                os.remove(archive)
+            self._install = {"stage": "done", "pct": 100, "error": None}
+            return {"ok": True}
+        except Exception as e:
+            decky.logger.error(f"install failed: {e}")
+            self._install = {"stage": "error", "pct": 0, "error": str(e)}
+            return {"ok": False, "error": str(e)}
+
+    # --- login wizard ------------------------------------------------------
+    # Drives Fluxer's own login screens, so instance handling, MFA and captcha
+    # stay the app's business. Credentials go straight into the page and are
+    # neither stored nor logged.
+
+    async def login_state(self) -> dict:
+        if not await self._cdp_up():
+            return {"step": "not_running"}
+        try:
+            await self._wait_for_page(tries=4)
+            st = await self._evaluate(LOGIN_STATE_JS)
+            # Screens with nothing to decide: accept the first-run defaults and
+            # pick e-mail sign-in (browser hand-off needs a desktop browser).
+            for _ in range(3):
+                step = st.get("step")
+                if step == "language":
+                    await self._login_click("Continue")
+                elif step == "method":
+                    await self._login_click("Sign in with email")
+                else:
+                    break
+                await asyncio.sleep(1.2)
+                st = await self._evaluate(LOGIN_STATE_JS)
+            return st
+        except Exception as e:
+            return {"step": "unknown", "text": str(e)}
+
+    async def _login_click(self, label: str):
+        try:
+            await self._evaluate(
+                f"(() => {{ const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === {json.dumps(label)}); if (b) b.click(); }})()"
+            )
+        except CdpError:
+            pass  # the page may reload on click
+
+    async def _settle(self, seconds: float = 5.0) -> dict:
+        end = asyncio.get_event_loop().time() + seconds
+        st: dict = {"step": "unknown"}
+        while asyncio.get_event_loop().time() < end:
+            await asyncio.sleep(0.8)
+            try:
+                st = await self._evaluate(LOGIN_STATE_JS)
+            except Exception:
+                continue  # navigating
+        return st
+
+    async def login_back(self) -> dict:
+        """One screen back; the e-mail/browser chooser is skipped, as going
+        forward skips it."""
+        back = "(() => { const b = document.querySelector('[aria-label=\"Go back\"]'); if (b) b.click(); })()"
+        st: dict = {"step": "unknown"}
+        for _ in range(2):
+            try:
+                await self._evaluate(back)
+            except CdpError:
+                pass
+            await asyncio.sleep(1.2)
+            try:
+                st = await self._evaluate(LOGIN_STATE_JS)
+            except Exception:
+                continue
+            if st.get("step") != "method":
+                break
+        return st
+
+    async def login_choose_instance(self, host: str, is_new: bool = False) -> dict:
+        host = (host or "").strip()
+        if not host:
+            return {"ok": False, "error": "Enter an instance address."}
+        try:
+            if is_new:
+                await self._evaluate(
+                    "(() => { const b = [...document.querySelectorAll('button')].find((x) => /Add another instance/i.test(x.textContent)); if (b) b.click(); })()"
+                )
+                await asyncio.sleep(0.8)
+                await self._evaluate(
+                    f"(() => {{ const el = document.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, {json.dumps(host)}); el.dispatchEvent(new Event('input', {{ bubbles: true }})); }})()"
+                )
+                await asyncio.sleep(0.4)
+                await self._login_click("Continue")
+            else:
+                await self._evaluate(
+                    f"(() => {{ const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes({json.dumps(host)})); if (b) b.click(); }})()"
+                )
+        except CdpError:
+            pass
+        return {"ok": True, **(await self._settle(4.0))}
+
+    async def login_submit(self, email: str, password: str) -> dict:
+        fill = (
+            "(() => { const set = (el, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };"
+            f"set(document.querySelector('input[name=email]'), {json.dumps(email)});"
+            f"set(document.querySelector('input[name=password]'), {json.dumps(password)}); }})()"
+        )
+        try:
+            await self._evaluate(fill)
+            await asyncio.sleep(0.4)
+            await self._login_click("Sign in")
+        except CdpError as e:
+            return {"ok": False, "error": "Could not use the login form."}
+        return {"ok": True, **(await self._settle(7.0))}
+
+    async def login_code(self, code: str) -> dict:
+        try:
+            await self._evaluate(
+                "(() => { const el = document.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, "
+                + json.dumps(code)
+                + "); el.dispatchEvent(new Event('input', { bubbles: true })); })()"
+            )
+            await asyncio.sleep(0.4)
+            for label in ("Verify", "Continue", "Sign in", "Submit"):
+                await self._login_click(label)
+        except CdpError:
+            return {"ok": False, "error": "Could not use the code field."}
+        return {"ok": True, **(await self._settle(6.0))}
+
     # --- plugin settings -------------------------------------------------
 
     def _settings_path(self) -> str:
@@ -298,13 +516,16 @@ class Plugin:
             return {}
 
     async def get_settings(self) -> dict:
-        return {"autostart": bool(self._read_settings().get("autostart", False))}
+        st = self._read_settings()
+        return {"autostart": bool(st.get("autostart", False)), "menu_entry": bool(st.get("menu_entry", True))}
 
     async def set_settings(self, patch: dict) -> dict:
         try:
             settings = self._read_settings()
             if "autostart" in patch:
                 settings["autostart"] = bool(patch["autostart"])
+            if "menu_entry" in patch:
+                settings["menu_entry"] = bool(patch["menu_entry"])
             os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
             with open(self._settings_path(), "w", encoding="utf-8") as f:
                 json.dump(settings, f)

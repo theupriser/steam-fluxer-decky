@@ -51,6 +51,7 @@ export interface FluxerDm {
 }
 
 export interface FluxerState {
+  installed?: boolean;
   running: boolean;
   ready: boolean;
   logged_in: boolean;
@@ -93,4 +94,30 @@ export function useFluxerState() {
     };
   }, []);
   return state;
+}
+
+// --- Steam menu entry switch (a plugin setting shared with the menu patch) ---
+const menuListeners = new Set<(v: boolean) => void>();
+let menuEntry = true;
+let menuLoaded = false;
+
+export const setMenuEntryEnabled = (v: boolean) => {
+  menuEntry = v;
+  menuListeners.forEach((l) => l(v));
+};
+
+/** Whether the Fluxer entry shows in the Steam main menu. */
+export function useMenuEntry() {
+  const [value, setValue] = useState(menuEntry);
+  useEffect(() => {
+    menuListeners.add(setValue);
+    if (!menuLoaded) {
+      menuLoaded = true;
+      call<[], { menu_entry?: boolean }>("get_settings")
+        .then((s) => setMenuEntryEnabled(s.menu_entry !== false))
+        .catch(() => { menuLoaded = false; });
+    }
+    return () => { menuListeners.delete(setValue); };
+  }, []);
+  return value;
 }

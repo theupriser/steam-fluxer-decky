@@ -67,7 +67,9 @@ const Panel = () => {
   };
   const voice = state?.voice;
   const inCall = !!voice?.channelId;
-  const status = !state?.running
+  const status = state && state.installed === false
+    ? "Not installed"
+    : !state?.running
     ? "Not running"
     : !state.ready
       ? "Starting..."
@@ -97,7 +99,7 @@ const Panel = () => {
         </Card>
       </PanelSectionRow>
       <PanelSectionRow>
-        <Btn disabled={!state?.ready} onClick={openFluxerView}>Open Fluxer</Btn>
+        <Btn onClick={openFluxerView}>{state?.logged_in ? "Open Fluxer" : "Set up Fluxer"}</Btn>
       </PanelSectionRow>
       {inCall && (
         <PanelSectionRow>

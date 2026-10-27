@@ -1,11 +1,12 @@
 import { call } from "@decky/api";
 import { Focusable } from "@decky/ui";
 import { FC, useEffect, useState } from "react";
-import { FluxerState, refreshState } from "./state";
+import { FluxerState, refreshState, setMenuEntryEnabled } from "./state";
 import { DANGER, ONLINE, Tile } from "./ui";
 
 interface PluginSettings {
   autostart: boolean;
+  menu_entry: boolean;
 }
 
 const Heading: FC = ({ children }) => (
@@ -69,6 +70,7 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
     } catch (e: any) {
       setNote(String(e?.message || e));
     }
+    if (patch.menu_entry !== undefined) setMenuEntryEnabled(patch.menu_entry);
     await load();
     setBusy(false);
   };
@@ -104,6 +106,14 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
             value={settings.autostart}
             disabled={busy}
             onChange={(v) => set({ autostart: v })}
+          />
+          <Heading>Steam menu</Heading>
+          <Switch
+            label="Show Fluxer in the Steam menu"
+            hint="The entry in the Steam button menu that opens this view"
+            value={settings.menu_entry}
+            disabled={busy}
+            onChange={(v) => set({ menu_entry: v })}
           />
         </>
       )}
