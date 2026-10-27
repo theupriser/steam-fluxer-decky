@@ -20,7 +20,7 @@ import tarfile
 from typing import Any, Optional
 
 import decky  # type: ignore
-from aiohttp import ClientError, ClientSession, ClientTimeout, TCPConnector, WSMsgType  # type: ignore
+from aiohttp import ClientError, ClientSession, ClientTimeout, TCPConnector, WSMsgType, web  # type: ignore
 
 BRIDGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults", "bridge.js")
 CDP_PORT = 9224
@@ -99,6 +99,14 @@ ENSURE_HIDDEN_JS = """
 """
 
 
+# Screen share in Game Mode. The window X11 capture of Fluxer sees only black
+# under gamescope, so the screen comes from gamescope's own PipeWire stream:
+# GStreamer encodes it to H.264, a local websocket hands it to Fluxer's page,
+# which decodes it into the video track Fluxer shares.
+STREAM_RESOLUTIONS = {"720p": (1280, 720, 3000), "1080p": (1920, 1080, 6000), "1440p": (2560, 1440, 10000)}
+STREAM_FPS = (15, 30, 60)
+AU_MARKER = b"\x00\x00\x00\x01\x09"  # access unit delimiter: starts every frame
+
 # Decky's bundled Python does not always find the system certificates.
 CA_BUNDLES = (
     "/etc/ssl/certs/ca-certificates.crt",
@@ -128,6 +136,7 @@ class Plugin:
     _session: Optional[ClientSession] = None
     _install: dict = {"stage": "idle", "pct": 0, "error": None}
     _lock: Optional[asyncio.Lock] = None
+    _stream: Optional[dict] = None
 
     # --- lifecycle -------------------------------------------------------
 
@@ -666,7 +675,12 @@ class Plugin:
 
     async def get_settings(self) -> dict:
         st = self._read_settings()
-        return {"autostart": bool(st.get("autostart", False)), "menu_entry": bool(st.get("menu_entry", True))}
+        return {
+            "autostart": bool(st.get("autostart", False)),
+            "menu_entry": bool(st.get("menu_entry", True)),
+            "stream_res": st.get("stream_res") if st.get("stream_res") in STREAM_RESOLUTIONS else "720p",
+            "stream_fps": st.get("stream_fps") if st.get("stream_fps") in STREAM_FPS else 30,
+        }
 
     async def set_settings(self, patch: dict) -> dict:
         try:
@@ -675,6 +689,10 @@ class Plugin:
                 settings["autostart"] = bool(patch["autostart"])
             if "menu_entry" in patch:
                 settings["menu_entry"] = bool(patch["menu_entry"])
+            if patch.get("stream_res") in STREAM_RESOLUTIONS:
+                settings["stream_res"] = patch["stream_res"]
+            if patch.get("stream_fps") in STREAM_FPS:
+                settings["stream_fps"] = patch["stream_fps"]
             os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
             with open(self._settings_path(), "w", encoding="utf-8") as f:
                 json.dump(settings, f)
@@ -688,8 +706,145 @@ class Plugin:
     async def leave_voice(self) -> dict:
         return await self._act("leave()")
 
+    # --- screen share ----------------------------------------------------
+
+    def _stream_params(self) -> tuple[int, int, int, int]:
+        cfg = self._read_settings()
+        res = cfg.get("stream_res") if cfg.get("stream_res") in STREAM_RESOLUTIONS else "720p"
+        fps = cfg.get("stream_fps") if cfg.get("stream_fps") in STREAM_FPS else 30
+        w, h, bitrate = STREAM_RESOLUTIONS[res]
+        if fps > 30:
+            bitrate = int(bitrate * 1.5)
+        return w, h, fps, bitrate
+
+    def _screen_node(self) -> Optional[str]:
+        """PipeWire node of gamescope's screen; None lets pipewiresrc pick the default."""
+        try:
+            out = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5, env=self._user_env()).stdout
+            for n in json.loads(out):
+                props = (n.get("info") or {}).get("props") or {}
+                if str(props.get("media.class", "")).startswith("Video/") and "gamescope" in str(props.get("node.name", "")).lower():
+                    return str(n.get("id"))
+        except Exception as e:
+            decky.logger.warning(f"pw-dump failed: {e}")
+        return None
+
+    def _gst_command(self, w: int, h: int, fps: int, bitrate: int, synthetic: bool = False) -> list[str]:
+        if synthetic:  # test pattern instead of the screen
+            src = ["videotestsrc", "is-live=true", "pattern=ball"]
+        else:
+            node = self._screen_node()
+            src = ["pipewiresrc", "do-timestamp=true", "keepalive-time=100"] + ([f"target-object={node}"] if node else [])
+        return (
+            ["gst-launch-1.0", "-q", "-e"] + src
+            + ["!", "videoconvert", "!", "videoscale", "!", "videorate", "!", f"video/x-raw,width={w},height={h},framerate={fps}/1",
+               "!", "x264enc", "tune=zerolatency", "speed-preset=ultrafast", f"bitrate={bitrate}", f"key-int-max={fps * 2}", "aud=true",
+               "!", "video/x-h264,stream-format=byte-stream,profile=baseline", "!", "fdsink", "fd=1"]
+        )
+
+    async def _stream_ws(self, request):
+        ws = web.WebSocketResponse(heartbeat=15)
+        await ws.prepare(request)
+        if self._stream is not None:
+            self._stream["clients"].add(ws)
+        try:
+            async for _ in ws:
+                pass
+        finally:
+            if self._stream is not None:
+                self._stream["clients"].discard(ws)
+        return ws
+
+    async def _stream_pump(self, proc) -> None:
+        """Cut GStreamer's byte stream into frames (access units) and fan them out."""
+        buf = b""
+        assert proc.stdout is not None
+        while True:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+            starts, pos = [], 0
+            while (i := buf.find(AU_MARKER, pos)) >= 0:
+                starts.append(i)
+                pos = i + 1
+            for a, b in zip(starts, starts[1:]):
+                frame = buf[a:b]
+                st = self._stream
+                for ws in list(st["clients"]) if st else []:
+                    try:
+                        await asyncio.wait_for(ws.send_bytes(frame), 0.5)
+                    except Exception:
+                        st["clients"].discard(ws)
+            buf = buf[starts[-1]:] if starts else buf[-2_000_000:]
+
+    async def _stop_stream_backend(self) -> None:
+        st, self._stream = self._stream, None
+        if not st:
+            return
+        proc = st["proc"]
+        if proc.returncode is None:
+            try:
+                proc.send_signal(signal.SIGINT)  # -e: lets GStreamer finish cleanly
+                await asyncio.wait_for(proc.wait(), 3)
+            except Exception:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+        st["task"].cancel()
+        for ws in list(st["clients"]):
+            await ws.close()
+        await st["runner"].cleanup()
+
+    async def start_stream(self, synthetic: bool = False, dry_run: bool = False) -> dict:
+        if self._stream is not None:
+            return {"ok": True, "already": True}
+        if not shutil.which("gst-launch-1.0"):
+            return {"ok": False, "error": "GStreamer is not installed on this device."}
+        w, h, fps, bitrate = self._stream_params()
+        runner = None
+        try:
+            app = web.Application()
+            app.add_routes([web.get("/stream", self._stream_ws)])
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+            proc = await asyncio.create_subprocess_exec(
+                *self._as_user(self._gst_command(w, h, fps, bitrate, synthetic)),
+                env=self._user_env(),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            self._stream = {"proc": proc, "runner": runner, "clients": set(), "task": asyncio.create_task(self._stream_pump(proc)), "port": port}
+            await self._bridge(f"startStream({port}, {w}, {h}, {fps}, {str(not dry_run).lower()})")
+            return {"ok": True}
+        except Exception as e:
+            decky.logger.error(f"start_stream failed: {e}")
+            if self._stream is None and runner is not None:
+                await runner.cleanup()
+            await self._stop_stream_backend()
+            return {"ok": False, "error": str(e)}
+
+    async def stop_stream(self) -> dict:
+        try:
+            await self._bridge("stopStream()")
+        except Exception as e:
+            decky.logger.warning(f"stopStream in page failed: {e}")
+        await self._stop_stream_backend()
+        return {"ok": True}
+
+    async def stream_stats(self) -> dict:
+        """Frames decoded in the page so far (None when no stream link)."""
+        try:
+            return {"ok": True, "stats": await self._bridge("streamStats()"), "running": self._stream is not None}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     async def toggle_stream(self) -> dict:
-        return await self._act("toggleStream()")
+        return await (self.stop_stream() if self._stream is not None else self.start_stream())
 
     async def toggle_mute(self) -> dict:
         return await self._act("toggleMute()")

@@ -2,7 +2,7 @@ import { call } from "@decky/api";
 import { Focusable } from "@decky/ui";
 import { FC, useEffect, useState } from "react";
 import { FluxerState, refreshState, setMenuEntryEnabled } from "./state";
-import { DANGER, ONLINE, Tile } from "./ui";
+import { Btn, DANGER, ONLINE, Tile } from "./ui";
 
 interface Diagnostics {
   running: boolean;
@@ -14,6 +14,8 @@ interface Diagnostics {
 interface PluginSettings {
   autostart: boolean;
   menu_entry: boolean;
+  stream_res: string;
+  stream_fps: number;
 }
 
 const Heading: FC = ({ children }) => (
@@ -122,6 +124,22 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
             disabled={busy}
             onChange={(v) => set({ autostart: v })}
           />
+          <Heading>Screen share</Heading>
+          <div style={{ fontSize: 11, opacity: 0.55, margin: "0 4px 8px" }}>
+            Shares the whole screen, game included, from the Stream button in a call. Applies the next time you start sharing.
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.7, margin: "0 4px 6px" }}>Resolution</div>
+          <Focusable flow-children="row" style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {["720p", "1080p", "1440p"].map((r) => (
+              <Btn key={r} on={settings.stream_res === r} disabled={busy} onClick={() => set({ stream_res: r })}>{r}</Btn>
+            ))}
+          </Focusable>
+          <div style={{ fontSize: 12, opacity: 0.7, margin: "0 4px 6px" }}>Frame rate</div>
+          <Focusable flow-children="row" style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            {[15, 30, 60].map((f) => (
+              <Btn key={f} on={settings.stream_fps === f} disabled={busy} onClick={() => set({ stream_fps: f })}>{f} fps</Btn>
+            ))}
+          </Focusable>
           <Heading>Steam menu</Heading>
           <Switch
             label="Show Fluxer in the Steam menu"

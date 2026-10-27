@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 8;
+  const VERSION = 10;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -229,12 +229,95 @@
     },
     join(channelId) { media().connectToVoiceChannel(null, channelId); },
     leave() { return media().disconnectFromVoiceChannel('user'); },
-    // Screen share through the app's own voice engine. Which screen/window is
-    // shared is decided by the app (Electron display capture).
-    async toggleStream() {
-      const next = !window.__fluxerDeckStream;
-      await engine().setScreenShareEnabled(next);
-      window.__fluxerDeckStream = next;
+    // Screen share. Fluxer asks for a screen with getDisplayMedia; under
+    // gamescope that capture is black, so while sharing we answer that call with
+    // our own track: H.264 frames from the plugin (gamescope's PipeWire stream)
+    // decoded here. The share itself is still started and carried by Fluxer.
+    async startStream(port, width, height, fps, publish = true) {
+      if (window.__fluxerDeckStreamCtl) throw new Error('already sharing');
+      if (typeof VideoDecoder === 'undefined') throw new Error('this Fluxer build cannot decode video');
+      const ctl = { frames: 0, error: null, closed: false };
+      const hasKey = (d) => {
+        for (let i = 0; i + 3 < d.length; i++) {
+          if (d[i] === 0 && d[i + 1] === 0 && d[i + 2] === 1 && ((d[i + 3] & 0x1f) === 5 || (d[i + 3] & 0x1f) === 7)) return true;
+        }
+        return false;
+      };
+      // A track generator needs no painting, so it keeps running while the
+      // window is hidden (a canvas stream would stall).
+      let track;
+      let write;
+      if (typeof MediaStreamTrackGenerator !== 'undefined') {
+        const gen = new MediaStreamTrackGenerator({ kind: 'video' });
+        const writer = gen.writable.getWriter();
+        track = gen;
+        write = (frame) => { writer.write(frame).catch(() => frame.close()); };
+        ctl.closeTrack = () => { try { writer.close(); } catch { /* ignore */ } try { gen.stop(); } catch { /* ignore */ } };
+      } else {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const g = canvas.getContext('2d');
+        track = canvas.captureStream(fps).getVideoTracks()[0];
+        write = (frame) => { g.drawImage(frame, 0, 0, width, height); frame.close(); };
+        ctl.closeTrack = () => { try { track.stop(); } catch { /* ignore */ } };
+      }
+      const decoder = new VideoDecoder({
+        output: (frame) => { ctl.frames += 1; write(frame); },
+        error: (e) => { ctl.error = String(e && e.message || e); },
+      });
+      decoder.configure({ codec: 'avc1.42E034', optimizeForLatency: true });
+      let gotKey = false;
+      let ts = 0;
+      const ws = new WebSocket('ws://127.0.0.1:' + port + '/stream');
+      ws.binaryType = 'arraybuffer';
+      ws.onmessage = (m) => {
+        const d = new Uint8Array(m.data);
+        const key = hasKey(d);
+        if (!gotKey && !key) return;
+        gotKey = true;
+        try {
+          decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: ts, data: d }));
+          ts += Math.round(1e6 / fps);
+        } catch (e) { ctl.error = String(e && e.message || e); }
+      };
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = () => reject(new Error('could not reach the stream link (blocked by the page?)'));
+        setTimeout(() => reject(new Error('stream link timed out')), 5000);
+      });
+      const md = navigator.mediaDevices;
+      const original = md.getDisplayMedia;
+      Object.assign(ctl, { ws, decoder, md, original });
+      window.__fluxerDeckStreamCtl = ctl;
+      // publish=false decodes only (for tests): nothing is shared.
+      if (!publish) return;
+      md.getDisplayMedia = async () => new MediaStream([track]);
+      try {
+        await engine().setScreenShareEnabled(true);
+      } catch (e) {
+        await api.stopStream();
+        throw e;
+      }
+      window.__fluxerDeckStream = true;
+    },
+    async stopStream() {
+      const ctl = window.__fluxerDeckStreamCtl;
+      window.__fluxerDeckStream = false;
+      if (!ctl || ctl.original !== undefined) {
+        try { await engine().setScreenShareEnabled(false); } catch { /* not sharing */ }
+      }
+      if (!ctl) return;
+      window.__fluxerDeckStreamCtl = null;
+      try { ctl.md.getDisplayMedia = ctl.original; } catch { /* ignore */ }
+      try { ctl.ws.close(); } catch { /* ignore */ }
+      try { ctl.decoder.close(); } catch { /* ignore */ }
+      if (ctl.closeTrack) ctl.closeTrack();
+    },
+    // Frames decoded so far: tells "link works, screen is idle" from "no link".
+    streamStats() {
+      const c = window.__fluxerDeckStreamCtl;
+      return c ? { frames: c.frames, error: c.error } : null;
     },
     toggleMute() { voice().toggleSelfMute(); },
     toggleDeafen() { voice().toggleSelfDeaf(); },
