@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import platform
+import pwd
 import re
 import shutil
 import signal
@@ -27,6 +28,8 @@ CDP_BASE = f"http://127.0.0.1:{CDP_PORT}"
 APP_URL_PREFIX = "fluxer-app://"
 # Official desktop build (tar.gz): installs without root, so it also works on a
 # read-only SteamOS root.
+FLATPAK_APP = "app.fluxer.Fluxer"
+FLATHUB_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 FLUXER_DOWNLOAD = "https://pkgs.fluxer.com/desktop/stable/linux/{arch}/latest/tar_gz"
 
 # Runs inside the Fluxer page. Reports which login step is on screen. Never
@@ -147,8 +150,37 @@ class Plugin:
     def _install_dir(self) -> str:
         return os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, "fluxer")
 
+    def _user_home(self) -> str:
+        return getattr(decky, "DECKY_USER_HOME", None) or os.path.expanduser("~")
+
+    def _user_env(self) -> dict:
+        """Environment of the desktop user's session, for Flatpak and Fluxer."""
+        env = dict(os.environ)
+        env.setdefault("DISPLAY", ":0")
+        env.setdefault("XDG_SESSION_TYPE", "x11")
+        try:
+            uid = pwd.getpwnam(decky.DECKY_USER).pw_uid if decky.DECKY_USER else os.getuid()
+        except KeyError:
+            uid = os.getuid()
+        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+        env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
+        return env
+
+    def _as_user(self, cmd: list[str]) -> list[str]:
+        # Decky may run as root; Flatpak and Fluxer belong to the desktop user.
+        if os.getuid() == 0 and decky.DECKY_USER:
+            return ["runuser", "-u", decky.DECKY_USER, "--"] + cmd
+        return cmd
+
+    def _flatpak_installed(self) -> bool:
+        """Cheap file check (this runs on every state poll): user or system install."""
+        return any(
+            os.path.isdir(os.path.join(base, "app", FLATPAK_APP))
+            for base in (os.path.join(self._user_home(), ".local/share/flatpak"), "/var/lib/flatpak")
+        )
+
     def _find_binary(self) -> tuple[Optional[str], bool]:
-        """(path, managed): a system install wins over the plugin's own copy."""
+        """(path, managed) of a native or plugin-managed copy; a native install wins."""
         system = shutil.which("fluxer") or ("/usr/bin/fluxer" if os.path.exists("/usr/bin/fluxer") else None)
         if system:
             return system, False
@@ -157,18 +189,21 @@ class Plugin:
             return builds[-1], True
         return None, False
 
+    def _is_installed(self) -> bool:
+        return self._find_binary()[0] is not None or self._flatpak_installed()
+
     def _fluxer_command(self) -> list[str]:
-        binary, managed = self._find_binary()
-        binary = binary or "/usr/bin/fluxer"
-        # --autostart + the app's own startMinimized setting = window created hidden.
-        cmd = [binary, "--autostart", "--ozone-platform=x11", f"--remote-debugging-port={CDP_PORT}"]
-        if managed:
+        args = ["--autostart", "--ozone-platform=x11", f"--remote-debugging-port={CDP_PORT}"]
+        native, managed = self._find_binary()
+        # Order: native package, then the Flatpak, then the plugin's own copy.
+        if native and not managed:
+            return self._as_user([native] + args)
+        if self._flatpak_installed():
+            return self._as_user(["flatpak", "run", FLATPAK_APP] + args)
+        if native:
             # The extracted chrome-sandbox is not setuid root.
-            cmd.append("--no-sandbox")
-        # Decky may run as root; Fluxer must run as the desktop user.
-        if os.getuid() == 0 and decky.DECKY_USER:
-            cmd = ["runuser", "-u", decky.DECKY_USER, "--"] + cmd
-        return cmd
+            return self._as_user([native] + args + ["--no-sandbox"])
+        return self._as_user(["/usr/bin/fluxer"] + args)
 
     async def _cdp_up(self) -> bool:
         try:
@@ -180,9 +215,7 @@ class Plugin:
     async def start(self) -> dict:
         if await self._cdp_up():
             return {"ok": True, "already_running": True}
-        env = dict(os.environ)
-        env.setdefault("DISPLAY", ":0")
-        env.setdefault("XDG_SESSION_TYPE", "x11")
+        env = self._user_env()
         try:
             self._proc = subprocess.Popen(
                 self._fluxer_command(),
@@ -334,7 +367,7 @@ class Plugin:
     # --- state for the frontend -----------------------------------------
 
     async def get_state(self) -> dict:
-        state: dict = {"running": False, "ready": False, "logged_in": False, "accounts": [], "error": None, "installed": self._find_binary()[0] is not None}
+        state: dict = {"running": False, "ready": False, "logged_in": False, "accounts": [], "error": None, "installed": self._is_installed()}
         if not await self._cdp_up():
             return state
         state["running"] = True
@@ -412,7 +445,7 @@ class Plugin:
 
     async def install_status(self) -> dict:
         path, managed = self._find_binary()
-        return {"installed": path is not None, "managed": managed, **self._install}
+        return {"installed": self._is_installed(), "managed": managed, "flatpak": self._flatpak_installed(), **self._install}
 
     def _extract(self, archive: str, dest: str):
         os.makedirs(dest, exist_ok=True)
@@ -423,6 +456,42 @@ class Plugin:
                     raise ValueError(f"unsafe path in archive: {m.name}")
             tar.extractall(dest)
 
+    async def _flatpak(self, args: list[str]) -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
+            *self._as_user(["flatpak"] + args),
+            env=self._user_env(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+    async def _install_flatpak(self) -> dict:
+        """Install Fluxer from Flathub as a user app, the way Steamcord installs Vesktop."""
+        self._install = {"stage": "download", "pct": 0, "error": None}
+        tail = ""
+        try:
+            remote = await self._flatpak(["remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_REPO])
+            await remote.communicate()
+            proc = await self._flatpak(["install", "--user", "-y", "--noninteractive", "flathub", FLATPAK_APP])
+            assert proc.stdout is not None
+            while True:
+                chunk = await proc.stdout.read(512)
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", "replace")
+                tail = (tail + text)[-400:]
+                found = re.findall(r"(\d{1,3})%", text)
+                if found:
+                    self._install["pct"] = min(100, int(found[-1]))
+            code = await proc.wait()
+            if code != 0:
+                raise RuntimeError(f"flatpak install failed ({code}): {tail.strip().splitlines()[-1] if tail.strip() else ''}")
+            self._install = {"stage": "done", "pct": 100, "error": None}
+            return {"ok": True}
+        except Exception as e:
+            decky.logger.error(f"flatpak install failed: {e}")
+            self._install = {"stage": "error", "pct": 0, "error": str(e)}
+            return {"ok": False, "error": str(e)}
+
     async def install_fluxer(self, source: Optional[str] = None) -> dict:
         """Download and unpack the official Linux build into the plugin's own dir.
 
@@ -430,6 +499,8 @@ class Plugin:
         """
         if self._install.get("stage") in ("download", "extract"):
             return {"ok": False, "error": "already_installing"}
+        if not source and shutil.which("flatpak"):
+            return await self._install_flatpak()
         dest = self._install_dir()
         archive = source or os.path.join(dest, "download.tar.gz")
         self._install = {"stage": "download", "pct": 0, "error": None}

@@ -52,12 +52,12 @@ const InstallStep: FC = () => {
 
   return (
     <Box>
-      <Lead>Fluxer is not installed on this device. The official Linux build is downloaded into the plugin's own folder (no root needed), so Fluxer also works in Game Mode without Desktop Mode.</Lead>
+      <Lead>Fluxer is not installed on this device. It is installed from Flathub as a normal app (for your user, no root needed), so Fluxer also works in Game Mode without Desktop Mode.</Lead>
       <Row>
         <Tile active={!busy} disabled={busy} onClick={install}>
           <FaDownload />
           <span style={{ fontWeight: 650 }}>
-            {st?.stage === "download" ? `Downloading... ${st.pct}%` : st?.stage === "extract" ? "Unpacking..." : "Install Fluxer"}
+            {st?.stage === "download" ? `Installing... ${st.pct}%` : st?.stage === "extract" ? "Unpacking..." : "Install Fluxer"}
           </span>
         </Tile>
       </Row>
