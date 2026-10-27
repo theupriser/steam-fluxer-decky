@@ -1,0 +1,10 @@
+{
+  "name": "Fluxer",
+  "author": "theupriser",
+  "api_version": 1,
+  "flags": [],
+  "publish": {
+    "tags": ["fluxer", "chat", "voice"],
+    "description": "Fluxer in Steam Gaming Mode: open it from the Steam button, switch accounts across instances"
+  }
+}
