@@ -280,13 +280,25 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
                   </Focusable>
                 </div>
               )}
-              <SidebarItem
-                active={mode === "accounts"}
-                icon={<Avatar name={active?.displayName || "?"} src={active?.avatar} size={28} />}
-                label={active?.displayName || "Account"}
-                badge={<FaChevronDown style={{ opacity: 0.5 }} />}
-                onPick={() => pick("accounts")}
-              />
+              {/* A switcher only makes sense with several accounts; with one it
+                  is just who you are, not a control. */}
+              {(state?.accounts.length ?? 0) > 1 ? (
+                <SidebarItem
+                  active={mode === "accounts"}
+                  icon={<Avatar name={active?.displayName || "?"} src={active?.avatar} size={28} />}
+                  label={active?.displayName || "Account"}
+                  badge={<FaChevronDown style={{ opacity: 0.5 }} />}
+                  onPick={() => pick("accounts")}
+                />
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 5 }}>
+                  <Avatar name={active?.displayName || "?"} src={active?.avatar} size={28} />
+                  <span style={{ minWidth: 0, flex: 1 }}>
+                    <span style={{ display: "block", fontWeight: 600, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{active?.displayName || "Account"}</span>
+                    {active?.instanceHost && <span style={{ display: "block", fontSize: 11, opacity: 0.5 }}>{active.instanceHost}</span>}
+                  </span>
+                </div>
+              )}
               <SidebarItem active={false} icon={<FaArrowLeft />} label="Back" badge={<span style={{ fontSize: 11, opacity: 0.5 }}>B</span>} onPick={closeModal} />
             </div>
           </Focusable>
