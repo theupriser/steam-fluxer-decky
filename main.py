@@ -75,8 +75,8 @@ class Plugin:
         decky.logger.info("Fluxer plugin loaded")
 
     async def _unload(self):
-        # Leave a Fluxer we did not start alone; stop only our own child.
-        await self._terminate_own_process()
+        # Fluxer outlives plugin reloads: killing it here would drop a running
+        # voice call. Only the panel's Stop button ends it.
         if self._session:
             await self._session.close()
         decky.logger.info("Fluxer plugin unloaded")
@@ -151,7 +151,17 @@ class Plugin:
     async def stop(self) -> dict:
         own = self._proc is not None
         await self._terminate_own_process()
-        # A Fluxer started by someone else is not ours to kill.
+        # After a plugin reload the child handle is gone: close the browser
+        # gracefully over CDP instead.
+        if not own and await self._cdp_up():
+            try:
+                async with self._session.get(f"{CDP_BASE}/json/version") as r:
+                    ws_url = (await r.json())["webSocketDebuggerUrl"]
+                async with self._session.ws_connect(ws_url) as ws:
+                    await ws.send_json({"id": 1, "method": "Browser.close"})
+                    await asyncio.sleep(1)
+            except Exception as e:
+                decky.logger.warning(f"graceful close failed: {e}")
         return {"ok": True, "stopped_own": own, "still_up": await self._cdp_up()}
 
     # --- CDP -------------------------------------------------------------
