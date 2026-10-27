@@ -20,13 +20,9 @@ export const openFluxerView = () => {
   open = true;
   let unwatch = () => {};
   const menuWin = getMainMenuWindow();
-  const modal = showModal(
-    <FluxerModal
-      closeModal={() => modal.Close()}
-    />,
-    undefined,
-    { fnOnClose: () => { unwatch(); open = false; } } as any
-  );
+  const modal = showModal(<FluxerModal closeModal={() => modal.Close()} />, undefined, {
+    fnOnClose: () => { unwatch(); open = false; },
+  } as any);
   // The Steam button opens the main menu ON TOP of the view: close the view so
   // the menu is shown alone; a second press then returns to the game.
   if (menuWin) {
@@ -35,6 +31,8 @@ export const openFluxerView = () => {
     unwatch = () => menuWin.removeEventListener("visibilitychange", onVisible);
   }
 };
+
+type Result = { ok: boolean; error?: string };
 
 const byInstance = (accounts: FluxerAccount[]) => {
   const groups = new Map<string, FluxerAccount[]>();
@@ -45,39 +43,97 @@ const byInstance = (accounts: FluxerAccount[]) => {
   return [...groups.entries()];
 };
 
+const Section: FC<{ title: string }> = ({ title, children }) => (
+  <div style={{ marginBottom: 18 }}>
+    <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 6 }}>{title}</div>
+    {children}
+  </div>
+);
+
 const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const state = useFluxerState();
   const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const switchTo = async (key: string) => {
-    const res = await call<[string], { ok: boolean; error?: string }>("switch_account", key);
-    setNote(res.ok ? null : `Switching accounts is not implemented yet (${res.error}).`);
-    refreshState();
+  const run = async (method: string, ...args: string[]) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await call<string[], Result>(method, ...args);
+      if (!res.ok) setNote(res.error || "Something went wrong.");
+    } catch (e: any) {
+      setNote(String(e?.message || e));
+    }
+    await refreshState();
+    setBusy(false);
   };
+
+  const voice = state?.voice;
+  const inCall = !!voice?.channelId;
 
   return (
     <ModalRoot onCancel={closeModal} closeModal={closeModal}>
       <h2 style={{ marginTop: 0 }}>Fluxer</h2>
       {!state?.ready && <div>Fluxer is not running.</div>}
-      {state?.ready &&
-        byInstance(state.accounts).map(([host, accounts]) => (
-          <div key={host} style={{ marginBottom: 16 }}>
-            <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 6 }}>{host}</div>
-            <Focusable style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {accounts.map((a) => (
-                <DialogButton key={a.accountKey} disabled={!a.isValid} onClick={() => switchTo(a.accountKey)}>
-                  {a.displayName || a.userId}
-                  {a.accountKey === state.active_account_guess ? "  (active)" : ""}
-                  {!a.isValid ? "  (login expired)" : ""}
-                </DialogButton>
-              ))}
-            </Focusable>
-          </div>
-        ))}
-      {note && <div style={{ color: "#ff6b6b", marginTop: 8 }}>{note}</div>}
-      <DialogButton onClick={closeModal} style={{ marginTop: 12 }}>
-        Close
-      </DialogButton>
+
+      {state?.ready && inCall && (
+        <Section title={voice?.connected ? "In voice" : "Connecting..."}>
+          <div style={{ fontSize: 16, marginBottom: 8 }}>{voice?.channelName || voice?.channelId}</div>
+          <Focusable style={{ display: "flex", gap: 8 }} flow-children="row">
+            <DialogButton disabled={busy} onClick={() => run("toggle_mute")}>
+              {voice?.selfMute ? "Unmute" : "Mute"}
+            </DialogButton>
+            <DialogButton disabled={busy} onClick={() => run("toggle_deafen")}>
+              {voice?.selfDeaf ? "Undeafen" : "Deafen"}
+            </DialogButton>
+            <DialogButton disabled={busy} onClick={() => run("leave_voice")}>
+              Leave
+            </DialogButton>
+          </Focusable>
+        </Section>
+      )}
+
+      {state?.ready && (state.guilds || []).map((g) => (
+        <Section key={g.id} title={g.name || g.id}>
+          <Focusable style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {g.voiceChannels.map((c) => (
+              <DialogButton
+                key={c.id}
+                disabled={busy || c.id === voice?.channelId}
+                onClick={() => run("join_voice", c.id)}
+              >
+                {c.name}{c.id === voice?.channelId ? "  (connected)" : ""}
+              </DialogButton>
+            ))}
+          </Focusable>
+        </Section>
+      ))}
+
+      {state?.ready && state.accounts.length > 0 && (
+        <Section title="Accounts">
+          {byInstance(state.accounts).map(([host, accounts]) => (
+            <div key={host} style={{ marginBottom: 10 }}>
+              <div style={{ opacity: 0.6, fontSize: 12, marginBottom: 4 }}>{host}</div>
+              <Focusable style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {accounts.map((a) => (
+                  <DialogButton
+                    key={a.accountKey}
+                    disabled={busy || !a.isValid || a.accountKey === state.active_account}
+                    onClick={() => run("switch_account", a.accountKey)}
+                  >
+                    {a.displayName || a.userId}
+                    {a.accountKey === state.active_account ? "  (active)" : ""}
+                    {!a.isValid ? "  (login expired)" : ""}
+                  </DialogButton>
+                ))}
+              </Focusable>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {note && <div style={{ color: "#ff6b6b", marginBottom: 8 }}>{note}</div>}
+      <DialogButton onClick={closeModal}>Close</DialogButton>
     </ModalRoot>
   );
 };

@@ -8,7 +8,7 @@ NAME=steam-fluxer-decky
 pnpm run build
 STAGE="/tmp/$NAME-deploy"
 "${SSH[@]}" "$HOST" "rm -rf $STAGE && mkdir -p $STAGE" 
-tar -c dist main.py plugin.json package.json | "${SSH[@]}" "$HOST" "tar -x -C $STAGE"
+tar -c dist defaults main.py plugin.json package.json | "${SSH[@]}" "$HOST" "tar -x -C $STAGE"
 # The remote login shell may be fish: send the script to bash on stdin.
 "${SSH[@]}" "$HOST" "bash -s" <<REMOTE
 set -e

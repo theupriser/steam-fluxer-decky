@@ -10,12 +10,29 @@ export interface FluxerAccount {
   isValid: boolean;
 }
 
+export interface VoiceState {
+  channelId: string | null;
+  channelName: string | null;
+  connected: boolean;
+  connecting: boolean;
+  selfMute: boolean;
+  selfDeaf: boolean;
+}
+
+export interface FluxerGuild {
+  id: string;
+  name: string | null;
+  voiceChannels: { id: string; name: string }[];
+}
+
 export interface FluxerState {
   running: boolean;
   ready: boolean;
   logged_in: boolean;
   accounts: FluxerAccount[];
-  active_account_guess?: string | null;
+  active_account?: string | null;
+  voice?: VoiceState | null;
+  guilds?: FluxerGuild[];
   error: string | null;
 }
 

@@ -49,9 +49,21 @@ A Fluxer *instance* is a Fluxer server deployment (hosted fluxer.app or self-hos
 - `desktopAccounts.getAll()` returns `{storageKey, record}` entries. `record` keys: `userId`, `localStorageData`, `lastActive`, `userData`, `managedStorageData`, `isValid`, `instance`, `storageKey`. **Treat `localStorageData` / `managedStorageData` as secrets (they hold tokens): never log or send them.** The plugin must only surface `userId`, display name, instance host and the account key.
 - The renderer also contains a `switchAccount` code path (several modules reference it); the account switcher UI should be driven through that, not by writing storage directly.
 
-## Open questions for the build
+## Resolved while building
 
-1. Hidden/minimized start and voice (mic in, audio out) with the window hidden in gamescope.
-2. Which module/export pair performs: join voice, leave, mute, deafen, start DM call, send message, switch account. Find by property name at runtime and feature-detect.
-3. Whether two Fluxer instances (accounts) can be connected at the same time or only one active account at a time. Check `AccountEngineHost.ts`.
-4. How to reflect state changes to the plugin (MobX `reaction`/`autorun` on the stores found above vs. polling).
+- **Hidden start works.** `fluxer --autostart ...` plus the persisted `window_behavior.startMinimized: true` creates the window hidden (0 visible X windows; CDP up within about 2 s). Do not edit `settings.json` while the app is running or before it starts: the app rewrites it. Set it through `window.electron.setDesktopWindowBehaviorSettings({startMinimized: true})` (only effective when `showTrayIcon` is on; it is forced off otherwise). On the very first run the window is shown once; the plugin then hides it with `windowClose()` (tray-backed, `closeToTray` must be on).
+- **Single instance:** a second launch hands off to the running instance, so always check CDP before launching, and when testing make sure no stale instance is left.
+- **Stores, found by method names at runtime** (see `defaults/bridge.js`):
+  - Accounts: `switchToAccount(accountKey)` (no-op for the current account), `currentAccountKey` (equals the stored `storageKey`, e.g. `https://host/api::<userId>`), `getAccount`.
+  - Voice: `connectToVoiceChannel(null, channelId)`, `disconnectFromVoiceChannel('user')`, `channelId`, `connected`, `connecting`.
+  - Mute/deafen: `toggleSelfMute()`, `toggleSelfDeaf()`, `getSelfMute()`, `getSelfDeaf()`.
+  - Guilds/channels: `getGuildIds()`, `getGuild(id)`, `getGuildChannels(guildId)`, `getChannel(id)`; guild voice channels have `type === 2`.
+- **Multiple accounts:** several accounts across instances are stored; the desktop account engine keeps a connection per account with one in the foreground. `switchToAccount` changes the foreground account (verified only as a no-op, there is a single account on the test machine).
+- **Calling the plugin backend without UI:** from Steam's `SharedJSContext`, `DeckyBackend.call('loader/call_plugin_method', '<Plugin>', '<method>', ...args)`.
+
+## Still open
+
+1. Voice with the window hidden under gamescope (mic in, audio out): needs a real voice channel join.
+2. A real account switch with two accounts (and whether voice survives it).
+3. DM calls and text chat in the view.
+4. React to state changes (MobX reactions) instead of polling every 3 s.

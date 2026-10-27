@@ -16,6 +16,7 @@ from typing import Any, Optional
 import decky  # type: ignore
 from aiohttp import ClientSession, ClientTimeout, WSMsgType  # type: ignore
 
+BRIDGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults", "bridge.js")
 CDP_PORT = 9224
 CDP_BASE = f"http://127.0.0.1:{CDP_PORT}"
 APP_URL_PREFIX = "fluxer-app://"
@@ -40,6 +41,21 @@ ACCOUNTS_JS = """
       isValid: r.isValid !== false,
     };
   });
+})()
+"""
+
+
+# Persist startMinimized through Fluxer's own settings bridge (editing
+# settings.json directly gets overwritten by the running app). Only hide the
+# current window when closing it goes to the tray, otherwise closing quits.
+ENSURE_HIDDEN_JS = """
+(async () => {
+  const e = window.electron;
+  const s = await e.getDesktopWindowBehaviorSettings();
+  if (s.startMinimized) return 'already';
+  await e.setDesktopWindowBehaviorSettings({ startMinimized: true });
+  if (s.closeToTray && s.showTrayIcon) { e.windowClose(); return 'set+hidden'; }
+  return 'set';
 })()
 """
 
@@ -69,7 +85,8 @@ class Plugin:
 
     def _fluxer_command(self) -> list[str]:
         binary = shutil.which("fluxer") or "/usr/bin/fluxer"
-        cmd = [binary, "--ozone-platform=x11", f"--remote-debugging-port={CDP_PORT}"]
+        # --autostart + the app's own startMinimized setting = window created hidden.
+        cmd = [binary, "--autostart", "--ozone-platform=x11", f"--remote-debugging-port={CDP_PORT}"]
         # Decky may run as root; Fluxer must run as the desktop user.
         if os.getuid() == 0 and decky.DECKY_USER:
             cmd = ["runuser", "-u", decky.DECKY_USER, "--"] + cmd
@@ -99,11 +116,20 @@ class Plugin:
         except OSError as e:
             decky.logger.error(f"could not start fluxer: {e}")
             return {"ok": False, "error": str(e)}
-        for _ in range(40):
+        for _ in range(60):
             if await self._cdp_up():
-                return {"ok": True}
+                break
             await asyncio.sleep(0.5)
-        return {"ok": False, "error": "cdp_timeout"}
+        else:
+            return {"ok": False, "error": "cdp_timeout"}
+        # First run: the setting is not set yet, so the window was shown.
+        # Persist it through the app's own bridge and hide the window.
+        try:
+            await self._wait_for_page()
+            await self._evaluate(ENSURE_HIDDEN_JS)
+        except Exception as e:
+            decky.logger.warning(f"ensure hidden failed: {e}")
+        return {"ok": True}
 
     async def _terminate_own_process(self):
         proc = self._proc
@@ -137,6 +163,23 @@ class Plugin:
             if t.get("type") == "page" and str(t.get("url", "")).startswith(APP_URL_PREFIX):
                 return t["webSocketDebuggerUrl"]
         raise CdpError("no_app_page")
+
+    async def _wait_for_page(self, tries: int = 40):
+        for _ in range(tries):
+            try:
+                await self._page_ws_url()
+                return
+            except Exception:
+                await asyncio.sleep(0.5)
+        raise CdpError("no_app_page")
+
+    def _bridge_source(self) -> str:
+        with open(BRIDGE_PATH, "r", encoding="utf-8") as f:
+            return f.read()
+
+    async def _bridge(self, call: str) -> Any:
+        """Evaluate a bridge call, e.g. 'state()' or 'join("123")'."""
+        return await self._evaluate(f"(async () => {{ const b = {self._bridge_source()}\n return await b.{call}; }})()")
 
     async def _evaluate(self, expression: str) -> Any:
         ws_url = await self._page_ws_url()
@@ -178,14 +221,39 @@ class Plugin:
         state["accounts"] = accounts
         state["ready"] = True
         state["logged_in"] = any(a.get("isValid") for a in accounts)
-        # Fluxer does not tell us which account is in the foreground yet;
-        # the most recently active one is the best guess until we hook the
-        # account engine events.
-        state["active_account_guess"] = accounts[0]["accountKey"] if accounts else None
+        state["active_account"] = None
+        state["voice"] = None
+        state["guilds"] = []
+        try:
+            live = await self._bridge("state()")
+            state["active_account"] = live.get("currentAccountKey")
+            state["voice"] = live.get("voice")
+            state["guilds"] = live.get("guilds", [])
+        except Exception as e:  # logged out / app still booting
+            state["error"] = str(e)
         return state
 
+    async def _act(self, call: str) -> dict:
+        try:
+            await self._bridge(call)
+            return {"ok": True}
+        except Exception as e:
+            decky.logger.error(f"bridge call {call.split('(')[0]} failed: {e}")
+            return {"ok": False, "error": str(e)}
+
+    async def join_voice(self, channel_id: str) -> dict:
+        return await self._act(f"join({json.dumps(channel_id)})")
+
+    async def leave_voice(self) -> dict:
+        return await self._act("leave()")
+
+    async def toggle_mute(self) -> dict:
+        return await self._act("toggleMute()")
+
+    async def toggle_deafen(self) -> dict:
+        return await self._act("toggleDeafen()")
+
     async def switch_account(self, account_key: str) -> dict:
-        # TODO: drive the renderer's own switchAccount path (see
-        # docs/fluxer-internals.md). Never write the account store directly.
-        decky.logger.info(f"switch_account requested (not implemented): {account_key!r}")
-        return {"ok": False, "error": "not_implemented"}
+        # Goes through the app's own Accounts.switchToAccount; the account
+        # store is never written directly.
+        return await self._act(f"switchAccount({json.dumps(account_key)})")
