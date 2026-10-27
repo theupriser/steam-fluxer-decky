@@ -126,6 +126,9 @@ const Panel = () => {
 
 export default definePlugin(() => {
   const unpatchMenu = patchMenu();
+  // "Start with Steam": the backend starts Fluxer when this interface loads
+  // (a short wait lets the screen settle on a fresh Game Mode start).
+  const autostartTimer = setTimeout(() => { call("frontend_loaded").catch(() => {}); }, 3000);
   // The Steam menu entry navigates to its route (Steam ignores onActivate on
   // these entries): the route opens the view and goes back.
   routerHook.addRoute(FLUXER_ROUTE, FluxerRouteOpener);
@@ -136,6 +139,7 @@ export default definePlugin(() => {
     content: <Panel />,
     icon: <FluxerLogo size={20} />,
     onDismount() {
+      clearTimeout(autostartTimer);
       unpatchMenu();
       routerHook.removeRoute(FLUXER_ROUTE);
     },

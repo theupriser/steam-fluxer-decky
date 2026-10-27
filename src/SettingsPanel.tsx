@@ -127,7 +127,7 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
           />
           <Heading>Screen share</Heading>
           <div style={{ fontSize: 11, opacity: 0.55, margin: "0 4px 8px" }}>
-            Shares the whole screen, game included, from the Stream button in a call. Applies the next time you start sharing.
+            Shares the whole screen, game included, from the Stream button in a call. Changing these while sharing restarts the share.
           </div>
           <div style={{ fontSize: 12, opacity: 0.7, margin: "0 4px 6px" }}>Resolution</div>
           <Focusable flow-children="row" style={{ display: "flex", gap: 6, marginBottom: 10 }}>

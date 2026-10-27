@@ -137,6 +137,7 @@ class Plugin:
     _install: dict = {"stage": "idle", "pct": 0, "error": None}
     _lock: Optional[asyncio.Lock] = None
     _stream: Optional[dict] = None
+    _starting: bool = False
 
     # --- lifecycle -------------------------------------------------------
 
@@ -144,8 +145,6 @@ class Plugin:
         self._session = ClientSession(timeout=ClientTimeout(total=5))
         self._lock = asyncio.Lock()
         decky.logger.info("Fluxer plugin loaded")
-        if self._read_settings().get("autostart"):
-            asyncio.create_task(self.start())
 
     async def _unload(self):
         # Fluxer outlives plugin reloads: killing it here would drop a running
@@ -222,6 +221,23 @@ class Plugin:
                 return r.status == 200
         except Exception:
             return False
+
+    async def frontend_loaded(self) -> dict:
+        """Called when Steam's interface loads the plugin (Game Mode starting,
+        a restart of it, a plugin reload). "Start with Steam" belongs here and
+        not in _main: the plugin service can come up before the screen exists,
+        and restarting Game Mode does not reload it."""
+        if not self._read_settings().get("autostart"):
+            return {"ok": True, "started": False}
+        if self._starting or await self._cdp_up():
+            return {"ok": True, "started": False}
+        self._starting = True
+        try:
+            res = await self.start()
+        finally:
+            self._starting = False
+        decky.logger.info(f"autostart: {res}")
+        return {**res, "started": True}
 
     async def start(self) -> dict:
         if await self._cdp_up():
@@ -692,16 +708,23 @@ class Plugin:
                 settings["autostart"] = bool(patch["autostart"])
             if "menu_entry" in patch:
                 settings["menu_entry"] = bool(patch["menu_entry"])
+            before = {k: settings.get(k) for k in ("stream_res", "stream_fps", "stream_audio")}
             if patch.get("stream_res") in STREAM_RESOLUTIONS:
                 settings["stream_res"] = patch["stream_res"]
             if patch.get("stream_fps") in STREAM_FPS:
                 settings["stream_fps"] = patch["stream_fps"]
             if "stream_audio" in patch:
                 settings["stream_audio"] = bool(patch["stream_audio"])
+            changed = any(settings.get(k) != before[k] for k in before)
             os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
             with open(self._settings_path(), "w", encoding="utf-8") as f:
                 json.dump(settings, f)
-            return {"ok": True}
+            restarting = changed and self._stream is not None
+            if restarting:
+                # A share that is running picks up the new resolution, frame
+                # rate and sound setting right away.
+                asyncio.create_task(self._restart_stream())
+            return {"ok": True, "restarting_stream": restarting}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -891,6 +914,13 @@ class Plugin:
                 await runner.cleanup()
             await self._stop_stream_backend()
             return {"ok": False, "error": str(e)}
+
+    async def _restart_stream(self) -> None:
+        await self.stop_stream()
+        await asyncio.sleep(0.5)
+        res = await self.start_stream()
+        if not res.get("ok"):
+            decky.logger.warning(f"stream restart failed: {res.get('error')}")
 
     async def stop_stream(self) -> dict:
         try:
