@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 10;
+  const VERSION = 11;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -233,10 +233,10 @@
     // gamescope that capture is black, so while sharing we answer that call with
     // our own track: H.264 frames from the plugin (gamescope's PipeWire stream)
     // decoded here. The share itself is still started and carried by Fluxer.
-    async startStream(port, width, height, fps, publish = true) {
+    async startStream(port, width, height, fps, publish = true, withAudio = false) {
       if (window.__fluxerDeckStreamCtl) throw new Error('already sharing');
       if (typeof VideoDecoder === 'undefined') throw new Error('this Fluxer build cannot decode video');
-      const ctl = { frames: 0, error: null, closed: false };
+      const ctl = { frames: 0, audioFrames: 0, error: null, closed: false };
       const hasKey = (d) => {
         for (let i = 0; i + 3 < d.length; i++) {
           if (d[i] === 0 && d[i + 1] === 0 && d[i + 2] === 1 && ((d[i + 3] & 0x1f) === 5 || (d[i + 3] & 0x1f) === 7)) return true;
@@ -262,6 +262,23 @@
         write = (frame) => { g.drawImage(frame, 0, 0, width, height); frame.close(); };
         ctl.closeTrack = () => { try { track.stop(); } catch { /* ignore */ } };
       }
+      // Game sound arrives as raw 48 kHz stereo PCM: no codec, just AudioData.
+      let audioTrack = null;
+      let writeAudio = null;
+      if (withAudio && typeof MediaStreamTrackGenerator !== 'undefined' && typeof AudioData !== 'undefined') {
+        const agen = new MediaStreamTrackGenerator({ kind: 'audio' });
+        const awriter = agen.writable.getWriter();
+        audioTrack = agen;
+        let ats = 0;
+        writeAudio = (pcm) => {
+          const frames = pcm.byteLength / 4;
+          const data = new AudioData({ format: 's16', sampleRate: 48000, numberOfFrames: frames, numberOfChannels: 2, timestamp: ats, data: pcm });
+          ats += Math.round((frames / 48000) * 1e6);
+          awriter.write(data).catch(() => data.close());
+          ctl.audioFrames += 1;
+        };
+        ctl.closeAudio = () => { try { awriter.close(); } catch { /* ignore */ } try { agen.stop(); } catch { /* ignore */ } };
+      }
       const decoder = new VideoDecoder({
         output: (frame) => { ctl.frames += 1; write(frame); },
         error: (e) => { ctl.error = String(e && e.message || e); },
@@ -272,7 +289,12 @@
       const ws = new WebSocket('ws://127.0.0.1:' + port + '/stream');
       ws.binaryType = 'arraybuffer';
       ws.onmessage = (m) => {
-        const d = new Uint8Array(m.data);
+        const all = new Uint8Array(m.data);
+        if (all[0] === 1) {
+          if (writeAudio) { try { writeAudio(all.slice(1)); } catch (e) { ctl.error = String(e && e.message || e); } }
+          return;
+        }
+        const d = all.subarray(1);
         const key = hasKey(d);
         if (!gotKey && !key) return;
         gotKey = true;
@@ -292,9 +314,10 @@
       window.__fluxerDeckStreamCtl = ctl;
       // publish=false decodes only (for tests): nothing is shared.
       if (!publish) return;
-      md.getDisplayMedia = async () => new MediaStream([track]);
+      md.getDisplayMedia = async () => new MediaStream(audioTrack ? [track, audioTrack] : [track]);
       try {
-        await engine().setScreenShareEnabled(true);
+        // Ask for the audio track and match the capture to the plugin's settings.
+        await engine().setScreenShareEnabled(true, { audio: !!audioTrack, resolution: { width, height, frameRate: fps } });
       } catch (e) {
         await api.stopStream();
         throw e;
@@ -313,11 +336,12 @@
       try { ctl.ws.close(); } catch { /* ignore */ }
       try { ctl.decoder.close(); } catch { /* ignore */ }
       if (ctl.closeTrack) ctl.closeTrack();
+      if (ctl.closeAudio) ctl.closeAudio();
     },
     // Frames decoded so far: tells "link works, screen is idle" from "no link".
     streamStats() {
       const c = window.__fluxerDeckStreamCtl;
-      return c ? { frames: c.frames, error: c.error } : null;
+      return c ? { frames: c.frames, audioFrames: c.audioFrames, error: c.error } : null;
     },
     toggleMute() { voice().toggleSelfMute(); },
     toggleDeafen() { voice().toggleSelfDeaf(); },

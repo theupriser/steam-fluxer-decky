@@ -16,6 +16,7 @@ interface PluginSettings {
   menu_entry: boolean;
   stream_res: string;
   stream_fps: number;
+  stream_audio: boolean;
 }
 
 const Heading: FC = ({ children }) => (
@@ -140,6 +141,13 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
               <Btn key={f} on={settings.stream_fps === f} disabled={busy} onClick={() => set({ stream_fps: f })}>{f} fps</Btn>
             ))}
           </Focusable>
+          <Switch
+            label="Share game sound"
+            hint="Sends the device's sound output with the picture. Voices from the call are part of it."
+            value={settings.stream_audio}
+            disabled={busy}
+            onChange={(v) => set({ stream_audio: v })}
+          />
           <Heading>Steam menu</Heading>
           <Switch
             label="Show Fluxer in the Steam menu"

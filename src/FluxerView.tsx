@@ -28,25 +28,41 @@ const getMainMenuWindow = (): Window | null => {
   return (tree?.Root?.Element || tree?.m_Root?.m_element)?.ownerDocument?.defaultView ?? null;
 };
 
+// State of the one open view. If Steam never reports the modal as closed, the
+// next request closes the stale one and opens a fresh view: a missed close
+// must never lock the view out.
+let current: { close: () => void; finish: () => void } | null = null;
+
 /** Opens the Fluxer view from anywhere (QAM panel, Steam main menu). */
 export const openFluxerView = () => {
-  if (open) {
-    console.log("Fluxer: view is already open, ignoring the request");
-    return;
+  if (open && current) {
+    console.log("Fluxer: a view is still marked open, closing it and opening a fresh one");
+    try { current.close(); } catch { /* already gone */ }
+    current.finish();
   }
   open = true;
   console.log("Fluxer: opening the view");
   let unwatch = () => {};
+  const finish = () => {
+    unwatch();
+    unwatch = () => {};
+    if (current === handle) {
+      current = null;
+      open = false;
+    }
+  };
+  const handle = { close: () => {}, finish };
+  current = handle;
   try {
     const menuWin = getMainMenuWindow();
     const openedAt = Date.now();
-    const modal = showModal(<FluxerModal closeModal={() => modal.Close()} />, undefined, {
+    const modal = showModal(<FluxerModal closeModal={() => { modal.Close(); finish(); }} />, undefined, {
       fnOnClose: () => {
         console.log("Fluxer: view closed");
-        unwatch();
-        open = false;
+        finish();
       },
     } as any);
+    handle.close = () => modal.Close();
     // The Steam button opens the main menu ON TOP of the view: close the view so
     // the menu is shown alone; a second press then returns to the game. Only a
     // real hidden -> visible change counts, and not while the menu that opened
@@ -60,6 +76,7 @@ export const openFluxerView = () => {
         if (revealed && Date.now() - openedAt > 700) {
           console.log("Fluxer: Steam menu opened, closing the view");
           modal.Close();
+          finish();
         }
       };
       menuWin.addEventListener("visibilitychange", onVisible);
@@ -67,8 +84,7 @@ export const openFluxerView = () => {
     }
   } catch (e) {
     console.log("Fluxer: could not open the view", e);
-    unwatch();
-    open = false;
+    finish();
   }
 };
 

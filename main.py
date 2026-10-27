@@ -682,6 +682,7 @@ class Plugin:
             "menu_entry": bool(st.get("menu_entry", True)),
             "stream_res": st.get("stream_res") if st.get("stream_res") in STREAM_RESOLUTIONS else "720p",
             "stream_fps": st.get("stream_fps") if st.get("stream_fps") in STREAM_FPS else 30,
+            "stream_audio": bool(st.get("stream_audio", True)),
         }
 
     async def set_settings(self, patch: dict) -> dict:
@@ -695,6 +696,8 @@ class Plugin:
                 settings["stream_res"] = patch["stream_res"]
             if patch.get("stream_fps") in STREAM_FPS:
                 settings["stream_fps"] = patch["stream_fps"]
+            if "stream_audio" in patch:
+                settings["stream_audio"] = bool(patch["stream_audio"])
             os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
             with open(self._settings_path(), "w", encoding="utf-8") as f:
                 json.dump(settings, f)
@@ -744,6 +747,51 @@ class Plugin:
                "!", "video/x-h264,stream-format=byte-stream,profile=baseline", "!", "fdsink", "fd=1"]
         )
 
+    def _default_sink(self) -> Optional[str]:
+        try:
+            out = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, timeout=5, env=self._user_env())
+            return out.stdout.strip() or None
+        except Exception as e:
+            decky.logger.warning(f"pactl failed: {e}")
+            return None
+
+    def _gst_audio_command(self, synthetic: bool = False) -> Optional[list[str]]:
+        """System sound as raw 48 kHz stereo PCM. Fluxer encodes it itself."""
+        if synthetic:
+            src = ["audiotestsrc", "is-live=true", "wave=sine", "freq=440"]
+        else:
+            sink = self._default_sink()
+            if not sink:
+                return None
+            src = ["pipewiresrc", f"target-object={sink}", "stream-properties=props,stream.capture.sink=true", "do-timestamp=true"]
+        return (
+            ["gst-launch-1.0", "-q", "-e"] + src
+            + ["!", "audioconvert", "!", "audioresample", "!", "audio/x-raw,format=S16LE,rate=48000,channels=2,layout=interleaved",
+               "!", "fdsink", "fd=1"]
+        )
+
+    async def _broadcast(self, payload: bytes) -> None:
+        st = self._stream
+        for ws in list(st["clients"]) if st else []:
+            try:
+                await asyncio.wait_for(ws.send_bytes(payload), 0.5)
+            except Exception:
+                st["clients"].discard(ws)
+
+    async def _audio_pump(self, proc) -> None:
+        """20 ms PCM packets, tagged 0x01 (video frames are tagged 0x00)."""
+        assert proc.stdout is not None
+        size = 3840  # 960 frames * 2 channels * 2 bytes
+        buf = b""
+        while True:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+            while len(buf) >= size:
+                await self._broadcast(b"\x01" + buf[:size])
+                buf = buf[size:]
+
     async def _stream_ws(self, request):
         ws = web.WebSocketResponse(heartbeat=15)
         await ws.prepare(request)
@@ -771,13 +819,7 @@ class Plugin:
                 starts.append(i)
                 pos = i + 1
             for a, b in zip(starts, starts[1:]):
-                frame = buf[a:b]
-                st = self._stream
-                for ws in list(st["clients"]) if st else []:
-                    try:
-                        await asyncio.wait_for(ws.send_bytes(frame), 0.5)
-                    except Exception:
-                        st["clients"].discard(ws)
+                await self._broadcast(b"\x00" + buf[a:b])
             buf = buf[starts[-1]:] if starts else buf[-2_000_000:]
 
     async def _stop_stream_backend(self) -> None:
@@ -795,6 +837,18 @@ class Plugin:
                 except ProcessLookupError:
                     pass
         st["task"].cancel()
+        aproc = st.get("aproc")
+        if aproc is not None and aproc.returncode is None:
+            try:
+                aproc.send_signal(signal.SIGINT)
+                await asyncio.wait_for(aproc.wait(), 3)
+            except Exception:
+                try:
+                    aproc.kill()
+                except ProcessLookupError:
+                    pass
+        if st.get("atask"):
+            st["atask"].cancel()
         for ws in list(st["clients"]):
             await ws.close()
         await st["runner"].cleanup()
@@ -821,7 +875,15 @@ class Plugin:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             self._stream = {"proc": proc, "runner": runner, "clients": set(), "task": asyncio.create_task(self._stream_pump(proc)), "port": port}
-            await self._bridge(f"startStream({port}, {w}, {h}, {fps}, {str(not dry_run).lower()})")
+            audio = bool(self._read_settings().get("stream_audio", True))
+            acmd = self._gst_audio_command(synthetic) if audio else None
+            if acmd:
+                aproc = await asyncio.create_subprocess_exec(
+                    *self._as_user(acmd), env=self._user_env(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+                )
+                self._stream["aproc"] = aproc
+                self._stream["atask"] = asyncio.create_task(self._audio_pump(aproc))
+            await self._bridge(f"startStream({port}, {w}, {h}, {fps}, {str(not dry_run).lower()}, {str(bool(acmd)).lower()})")
             return {"ok": True}
         except Exception as e:
             decky.logger.error(f"start_stream failed: {e}")
