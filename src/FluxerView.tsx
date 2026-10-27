@@ -1,9 +1,10 @@
 import { call } from "@decky/api";
 import { Focusable, ModalRoot, NavEntryPositionPreferences, showModal } from "@decky/ui";
 import { FC, useState } from "react";
-import { FaCommentDots, FaMicrophone, FaMicrophoneSlash, FaCog, FaPhone, FaPhoneSlash, FaServer, FaUser, FaUserFriends, FaVolumeMute, FaVolumeUp, FaArrowLeft } from "react-icons/fa";
+import { FaMicrophone, FaMicrophoneSlash, FaCog, FaPhone, FaPhoneSlash, FaServer, FaUser, FaUserFriends, FaVolumeMute, FaVolumeUp, FaArrowLeft } from "react-icons/fa";
+import { FluxerLogo } from "./FluxerLogo";
 import { FluxerAccount, FluxerPerson, refreshState, useFluxerState } from "./state";
-import { ACCENT, FULL_BLEED, ONLINE, SIDEBAR_FIT, SidebarItem, Tile, chromeHideMarkerRef, pinTop } from "./ui";
+import { FULL_BLEED, ONLINE, SIDEBAR_FIT, SidebarItem, Tile, chromeHideMarkerRef, pinTop } from "./ui";
 
 const ModalRootAny = ModalRoot as any;
 
@@ -289,7 +290,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
           >
             <style>{SIDEBAR_FIT}</style>
             <div className="fx-xv-brand" style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px 17px", fontSize: 18, fontWeight: 800, flexShrink: 0 }}>
-              <FaCommentDots size={28} color={ACCENT} /> Fluxer
+              <FluxerLogo size={32} /> Fluxer
             </div>
             <div style={{ fontSize: 11, letterSpacing: 0.8, fontWeight: 700, opacity: 0.48, padding: "0 10px 7px" }}>NAVIGATION</div>
             <SidebarItem active={mode === "dms"} icon={<FaUser />} label="Direct messages" onPick={() => pick("dms")} />

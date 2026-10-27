@@ -3,7 +3,7 @@
 // https://github.com/Necrosiak/Steamcord (BSD-3-Clause).
 import { findInReactTree, getReactRoot } from "@decky/ui";
 import { FC, ReactElement } from "react";
-import { FaCommentDots } from "react-icons/fa";
+import { FluxerLogo } from "./FluxerLogo";
 import { useFluxerState } from "./state";
 
 export const FLUXER_ROUTE = "/fluxer";
@@ -114,6 +114,6 @@ const MenuItem: FC<MenuItemProps & { MenuItemComponent: FC<any>; useIconAsProp: 
   useIconAsProp,
   ...props
 }) => {
-  (props as any)[useIconAsProp ? "icon" : "children"] = <FaCommentDots />;
+  (props as any)[useIconAsProp ? "icon" : "children"] = <FluxerLogo size={20} />;
   return <MenuItemComponent {...props} label="Fluxer" />;
 };

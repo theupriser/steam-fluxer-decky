@@ -27,3 +27,5 @@ Requires the `fluxer` desktop package on the Steam Machine. `npx tsc --noEmit` i
 ## Credits
 
 The Steam menu technique comes from [DeckWebBrowser](https://github.com/jessebofill/DeckWebBrowser) as adapted in [Steamcord](https://github.com/Necrosiak/Steamcord) (BSD-3-Clause).
+
+The Fluxer logo is from the [Fluxer repository](https://github.com/fluxerapp/fluxer) (`fluxer_app/src/media/images/fluxer-logo-color.svg`), CC-BY-SA-4.0, (c) Fluxer Platform AB.
