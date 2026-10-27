@@ -13,12 +13,13 @@ import platform
 import re
 import shutil
 import signal
+import ssl
 import subprocess
 import tarfile
 from typing import Any, Optional
 
 import decky  # type: ignore
-from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType  # type: ignore
+from aiohttp import ClientError, ClientSession, ClientTimeout, TCPConnector, WSMsgType  # type: ignore
 
 BRIDGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "defaults", "bridge.js")
 CDP_PORT = 9224
@@ -93,6 +94,21 @@ ENSURE_HIDDEN_JS = """
   return 'set';
 })()
 """
+
+
+# Decky's bundled Python does not always find the system certificates.
+CA_BUNDLES = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+)
+
+
+def tls_context() -> ssl.SSLContext:
+    for path in CA_BUNDLES:
+        if os.path.exists(path):
+            return ssl.create_default_context(cafile=path)
+    return ssl.create_default_context()
 
 
 class CdpError(Exception):
@@ -422,7 +438,7 @@ class Plugin:
             if not source:
                 arch = "arm64" if platform.machine() in ("aarch64", "arm64") else "x64"
                 timeout = ClientTimeout(total=None, sock_connect=15, sock_read=60)
-                async with ClientSession(timeout=timeout) as session:
+                async with ClientSession(timeout=timeout, connector=TCPConnector(ssl=tls_context())) as session:
                     async with session.get(FLUXER_DOWNLOAD.format(arch=arch)) as r:
                         if r.status != 200:
                             raise RuntimeError(f"download failed (HTTP {r.status})")
