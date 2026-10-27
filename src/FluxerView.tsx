@@ -149,7 +149,15 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
       </Tile>
     </Focusable>
   ) : chat ? (
-    <div style={column}><ChatView key={chat.channelId} channelId={chat.channelId} /></div>
+    <div style={column}>
+      <Focusable flow-children="row" style={{ flexShrink: 0, display: "flex", marginBottom: 8 }}>
+        <Tile onClick={() => setChat(null)}>
+          <FaArrowLeft />
+          <span style={{ fontWeight: 650 }}>Back</span>
+        </Tile>
+      </Focusable>
+      <ChatView key={chat.channelId} channelId={chat.channelId} />
+    </div>
   ) : mode === "friends" ? (
     <div style={column}><FriendsHub onChat={openChat} onCall={joinCall} /></div>
   ) : mode === "settings" ? (
@@ -312,7 +320,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
                   </span>
                 </div>
               )}
-              <SidebarItem active={false} icon={<FaArrowLeft />} label="Back" badge={<span style={{ fontSize: 11, opacity: 0.5 }}>B</span>} onPick={closeModal} />
+              <SidebarItem active={false} icon={<FaArrowLeft />} label="Back" badge={<span style={{ fontSize: 11, opacity: 0.5 }}>B</span>} onPick={onCancel} />
             </div>
           </Focusable>
           <Focusable
