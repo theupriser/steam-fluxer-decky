@@ -149,7 +149,9 @@ class Plugin:
 
     async def _unload(self):
         # Fluxer outlives plugin reloads: killing it here would drop a running
-        # voice call. Only the panel's Stop button ends it.
+        # voice call. Only the panel's Stop button ends it. A running screen
+        # share is stopped: its capture process belongs to this plugin instance.
+        await self._stop_stream_backend()
         if self._session:
             await self._session.close()
         decky.logger.info("Fluxer plugin unloaded")

@@ -9,7 +9,7 @@ import {
   staticClasses,
 } from "@decky/ui";
 import { ReactNode, useEffect, useState } from "react";
-import { FaMicrophone, FaMicrophoneSlash, FaPhoneSlash, FaVolumeMute, FaVolumeUp } from "react-icons/fa";
+import { FaDesktop, FaMicrophone, FaMicrophoneSlash, FaPhoneSlash, FaVolumeMute, FaVolumeUp } from "react-icons/fa";
 import { FluxerLogo } from "./FluxerLogo";
 import { ONLINE, focusHalo } from "./ui";
 import { openFluxerView } from "./FluxerView";
@@ -110,6 +110,7 @@ const Panel = () => {
             <Btn active={!!voice?.selfDeaf} disabled={busy} onClick={() => run("toggle_deafen")}>
               {voice?.selfDeaf ? <FaVolumeMute /> : <FaVolumeUp />}
             </Btn>
+            <Btn active={!!voice?.streaming} disabled={busy} onClick={() => run("toggle_stream")}><FaDesktop /></Btn>
             <Btn danger disabled={busy} onClick={() => run("leave_voice")}><FaPhoneSlash /></Btn>
           </Focusable>
         </PanelSectionRow>

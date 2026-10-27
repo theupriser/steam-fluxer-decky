@@ -130,18 +130,28 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const active = state?.accounts.find((a) => a.accountKey === state.active_account) || state?.accounts[0];
   const server = (state?.guilds || []).find((g) => g.id === serverId) || null;
 
-  const run = async (method: string, ...args: string[]) => {
-    if (busy) return;
+  const run = async (method: string, ...args: string[]): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     setNote(null);
+    let ok = false;
     try {
       const res = await call<string[], Result>(method, ...args);
+      ok = !!res.ok;
       if (!res.ok) setNote(res.error || "Something went wrong.");
     } catch (e: any) {
       setNote(String(e?.message || e));
     }
     await refreshState();
     setBusy(false);
+    return ok;
+  };
+  // The share captures what gamescope shows: with this view open that would be
+  // the view itself. After starting, close it so the game is what gets shared.
+  const toggleStream = async () => {
+    const starting = !voice?.streaming;
+    const ok = await run("toggle_stream");
+    if (ok && starting) closeModal();
   };
 
   const pick = (m: Mode) => { setChat(null); setServerId(null); setMode(m); };
@@ -314,7 +324,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
                     <IconBtn on={!!voice?.selfDeaf} disabled={busy} onClick={() => run("toggle_deafen")}>
                       {voice?.selfDeaf ? <FaVolumeMute /> : <FaVolumeUp />}
                     </IconBtn>
-                    <IconBtn on={!!voice?.streaming} disabled={busy} onClick={() => run("toggle_stream")}>
+                    <IconBtn on={!!voice?.streaming} disabled={busy} onClick={toggleStream}>
                       <FaDesktop />
                     </IconBtn>
                     <IconBtn danger disabled={busy} onClick={() => run("leave_voice")}>
