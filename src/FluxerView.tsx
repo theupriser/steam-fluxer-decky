@@ -3,7 +3,7 @@ import { Focusable, ModalRoot, NavEntryPositionPreferences, showModal } from "@d
 import { FC, useState } from "react";
 import {
   FaArrowLeft, FaChevronDown, FaCog, FaDesktop, FaMicrophone, FaMicrophoneSlash, FaPhone, FaPhoneSlash,
-  FaServer, FaUser, FaUserFriends, FaVolumeMute, FaVolumeUp,
+  FaComment, FaServer, FaUser, FaUserFriends, FaVolumeMute, FaVolumeUp,
 } from "react-icons/fa";
 import { ChatView } from "./ChatView";
 import { FluxerLogo } from "./FluxerLogo";
@@ -47,7 +47,7 @@ export const openFluxerView = () => {
 
 type Result = { ok: boolean; error?: string };
 type Mode = "dms" | "friends" | "servers" | "settings" | "accounts";
-type Chat = { channelId: string; name: string };
+type Chat = { channelId: string; name: string; sub: string };
 
 const byInstance = <T extends { instanceHost: string | null }>(accounts: T[]) => {
   const groups = new Map<string, T[]>();
@@ -124,17 +124,19 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     else if (mode === "accounts") pick("dms");
     else closeModal();
   };
-  const openChat = (channelId: string, name: string) => { setMode("dms"); setChat({ channelId, name }); };
+  const openChat = (channelId: string, name: string) => { setMode("dms"); setChat({ channelId, name, sub: "Private message" }); };
+  // A server's text channel opens in place: B returns to that server's page.
+  const openChannel = (channelId: string, name: string) => setChat({ channelId, name: `#${name}`, sub: server?.name || "Text channel" });
   const joinCall = (channelId: string) => run("join_voice", channelId);
 
   const titles: Record<Mode, [string, string]> = {
     dms: ["Direct messages", "Your conversations"],
     friends: ["Friends", `${(state?.friends || []).length} friends`],
-    servers: server ? [server.name || server.id, "Voice channels"] : ["Servers", `${(state?.guilds || []).length} servers`],
+    servers: server ? [server.name || server.id, "Channels"] : ["Servers", `${(state?.guilds || []).length} servers`],
     settings: ["Settings", "Fluxer app and window"],
     accounts: ["Accounts", "Switch between your accounts"],
   };
-  const head: [string, string] = chat ? [chat.name, "Private message"] : titles[mode];
+  const head: [string, string] = chat ? [chat.name, chat.sub] : titles[mode];
   const scroller = { flex: 1, minHeight: 0, overflowY: "auto" as const, padding: "4px 8px 4px 4px" };
   const column = { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" as const };
 
@@ -182,7 +184,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
           <div key={g.id} style={{ marginBottom: 5 }}>
             <Tile flex active={here} onClick={() => setServerId(g.id)}>
               <ServerIcon name={g.name || "?"} src={g.icon} />
-              <Name sub={here ? "You are in a call here" : `${g.voiceChannels.length} voice channels`} subColor={here ? ONLINE : undefined}>{g.name || g.id}</Name>
+              <Name sub={here ? "You are in a call here" : `${g.textChannels.length} text · ${g.voiceChannels.length} voice`} subColor={here ? ONLINE : undefined}>{g.name || g.id}</Name>
               <span style={{ opacity: 0.5 }}>›</span>
             </Tile>
           </div>
@@ -191,14 +193,25 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     </Focusable>
   ) : mode === "servers" && server ? (
     <Focusable flow-children="column" style={scroller}>
-      {server.voiceChannels.length === 0 && <div style={{ opacity: 0.6 }}>No voice channels.</div>}
+      {server.textChannels.length === 0 && server.voiceChannels.length === 0 && <div style={{ opacity: 0.6 }}>No channels.</div>}
+      {server.textChannels.length > 0 && <Label>TEXT CHANNELS</Label>}
+      {server.textChannels.map((c) => (
+        <div key={c.id} style={{ marginBottom: 5 }}>
+          <Tile flex onClick={() => openChannel(c.id, c.name)}>
+            <span style={{ opacity: 0.7, flexShrink: 0, width: 16, textAlign: "center", fontWeight: 700 }}>#</span>
+            <Name sub={c.category || undefined}>{c.name}</Name>
+            <FaComment style={{ opacity: 0.7 }} />
+          </Tile>
+        </div>
+      ))}
+      {server.voiceChannels.length > 0 && <Label>VOICE CHANNELS</Label>}
       {server.voiceChannels.map((c) => {
         const here = c.id === voice?.channelId;
         return (
           <div key={c.id} style={{ marginBottom: 5 }}>
             <Tile flex active={here} disabled={busy || here} onClick={() => joinCall(c.id)}>
               <FaVolumeUp style={{ opacity: 0.7, flexShrink: 0 }} />
-              <Name sub={here ? "Connected" : undefined} subColor={here ? ONLINE : undefined}>{c.name}</Name>
+              <Name sub={here ? "Connected" : c.category || undefined} subColor={here ? ONLINE : undefined}>{c.name}</Name>
               <span style={{ width: 90, textAlign: "center", fontWeight: 650 }}>{here ? "In call" : "Join"}</span>
             </Tile>
           </div>

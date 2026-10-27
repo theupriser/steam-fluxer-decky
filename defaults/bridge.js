@@ -3,10 +3,12 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 6;
+  const VERSION = 7;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
+  const GUILD_TEXT = 0;
+  const GUILD_ANNOUNCEMENT = 5;
   let req;
   rspackChunkfluxer_app.push([[Symbol('deck')], {}, (r) => { req = r; }]);
 
@@ -93,13 +95,22 @@
       const c = channels();
       const guildList = g.getGuildIds().map((id) => {
         const guild = g.getGuild(id);
-        const voiceChannels = c
-          .getGuildChannels(id)
-          .filter((ch) => ch.type === GUILD_VOICE)
-          .sort((a, b) => (a.position || 0) - (b.position || 0))
-          .map((ch) => ({ id: ch.id, name: ch.name }));
-        return { id, name: guild && guild.name, icon: iconUrl(guild), voiceChannels };
-      }).filter((x) => x.voiceChannels.length > 0);
+        const all = c.getGuildChannels(id).slice().sort((x, y) => (x.position || 0) - (y.position || 0));
+        const categoryOf = (ch) => {
+          const parent = ch.parentId && all.find((x) => x.id === ch.parentId);
+          return parent ? parent.name : null;
+        };
+        const pick = (types) => all
+          .filter((ch) => types.includes(ch.type))
+          .map((ch) => ({ id: ch.id, name: ch.name, category: categoryOf(ch) }));
+        return {
+          id,
+          name: guild && guild.name,
+          icon: iconUrl(guild),
+          textChannels: pick([GUILD_TEXT, GUILD_ANNOUNCEMENT]),
+          voiceChannels: pick([GUILD_VOICE]),
+        };
+      }).filter((x) => x.voiceChannels.length > 0 || x.textChannels.length > 0);
       let channelName = null;
       if (m.channelId) {
         const ch = c.getChannel(m.channelId);

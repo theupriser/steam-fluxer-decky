@@ -21,11 +21,18 @@ export interface VoiceState {
   streaming?: boolean;
 }
 
+export interface FluxerChannel {
+  id: string;
+  name: string;
+  category: string | null;
+}
+
 export interface FluxerGuild {
   id: string;
   name: string | null;
   icon?: string | null;
-  voiceChannels: { id: string; name: string }[];
+  textChannels: FluxerChannel[];
+  voiceChannels: FluxerChannel[];
 }
 
 export interface FluxerPerson {
