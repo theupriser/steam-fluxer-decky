@@ -30,19 +30,45 @@ const getMainMenuWindow = (): Window | null => {
 
 /** Opens the Fluxer view from anywhere (QAM panel, Steam main menu). */
 export const openFluxerView = () => {
-  if (open) return;
+  if (open) {
+    console.log("Fluxer: view is already open, ignoring the request");
+    return;
+  }
   open = true;
+  console.log("Fluxer: opening the view");
   let unwatch = () => {};
-  const menuWin = getMainMenuWindow();
-  const modal = showModal(<FluxerModal closeModal={() => modal.Close()} />, undefined, {
-    fnOnClose: () => { unwatch(); open = false; },
-  } as any);
-  // The Steam button opens the main menu ON TOP of the view: close the view so
-  // the menu is shown alone; a second press then returns to the game.
-  if (menuWin) {
-    const onVisible = () => { if (!menuWin.document.hidden) modal.Close(); };
-    menuWin.addEventListener("visibilitychange", onVisible);
-    unwatch = () => menuWin.removeEventListener("visibilitychange", onVisible);
+  try {
+    const menuWin = getMainMenuWindow();
+    const openedAt = Date.now();
+    const modal = showModal(<FluxerModal closeModal={() => modal.Close()} />, undefined, {
+      fnOnClose: () => {
+        console.log("Fluxer: view closed");
+        unwatch();
+        open = false;
+      },
+    } as any);
+    // The Steam button opens the main menu ON TOP of the view: close the view so
+    // the menu is shown alone; a second press then returns to the game. Only a
+    // real hidden -> visible change counts, and not while the menu that opened
+    // the view is still closing itself (it flips visibility right after).
+    if (menuWin) {
+      let wasHidden = menuWin.document.hidden;
+      const onVisible = () => {
+        const hidden = menuWin.document.hidden;
+        const revealed = wasHidden && !hidden;
+        wasHidden = hidden;
+        if (revealed && Date.now() - openedAt > 700) {
+          console.log("Fluxer: Steam menu opened, closing the view");
+          modal.Close();
+        }
+      };
+      menuWin.addEventListener("visibilitychange", onVisible);
+      unwatch = () => menuWin.removeEventListener("visibilitychange", onVisible);
+    }
+  } catch (e) {
+    console.log("Fluxer: could not open the view", e);
+    unwatch();
+    open = false;
   }
 };
 
