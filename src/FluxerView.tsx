@@ -1,8 +1,8 @@
 import { call } from "@decky/api";
 import { Focusable, ModalRoot, NavEntryPositionPreferences, showModal } from "@decky/ui";
 import { FC, useState } from "react";
-import { FaCommentDots, FaMicrophone, FaMicrophoneSlash, FaPhoneSlash, FaServer, FaUserFriends, FaVolumeMute, FaVolumeUp, FaArrowLeft } from "react-icons/fa";
-import { FluxerAccount, refreshState, useFluxerState } from "./state";
+import { FaCommentDots, FaMicrophone, FaMicrophoneSlash, FaCog, FaPhone, FaPhoneSlash, FaServer, FaUser, FaUserFriends, FaVolumeMute, FaVolumeUp, FaArrowLeft } from "react-icons/fa";
+import { FluxerAccount, FluxerPerson, refreshState, useFluxerState } from "./state";
 import { ACCENT, FULL_BLEED, ONLINE, SIDEBAR_FIT, SidebarItem, Tile, chromeHideMarkerRef, pinTop } from "./ui";
 
 const ModalRootAny = ModalRoot as any;
@@ -37,7 +37,7 @@ export const openFluxerView = () => {
 };
 
 type Result = { ok: boolean; error?: string };
-type Mode = "voice" | "servers" | "accounts";
+type Mode = "dms" | "friends" | "servers" | "call" | "settings";
 
 const byInstance = (accounts: FluxerAccount[]) => {
   const groups = new Map<string, FluxerAccount[]>();
@@ -66,6 +66,20 @@ const Name: FC<{ sub?: string; subColor?: string }> = ({ children, sub, subColor
   </span>
 );
 
+const STATUS_COLOR: Record<string, string> = { online: "#23a55a", idle: "#f0b232", dnd: "#ed4245" };
+const Avatar: FC<{ name: string; status?: string }> = ({ name, status }) => (
+  <span style={{ position: "relative", width: 38, height: 38, flexShrink: 0 }}>
+    <span style={{ width: 38, height: 38, borderRadius: "50%", background: "linear-gradient(135deg,#4641d9,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
+      {(name || "?")[0]?.toUpperCase()}
+    </span>
+    {status && (
+      <span style={{ position: "absolute", right: -1, bottom: -1, width: 12, height: 12, borderRadius: "50%", border: "2px solid #11151d", background: STATUS_COLOR[status] || "#80848e" }} />
+    )}
+  </span>
+);
+
+const statusText = (s: string) => (s === "dnd" ? "Do not disturb" : s.charAt(0).toUpperCase() + s.slice(1));
+
 const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const state = useFluxerState();
   const [note, setNote] = useState<string | null>(null);
@@ -77,7 +91,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const voice = state?.voice;
   const inCall = !!voice?.channelId;
   // Until a section is chosen: the call while in one, otherwise the servers.
-  const mode: Mode = picked ?? (inCall ? "voice" : "servers");
+  const mode: Mode = picked ?? (inCall ? "call" : "dms");
 
   const run = async (method: string, ...args: string[]) => {
     if (busy) return;
@@ -86,7 +100,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     try {
       const res = await call<string[], Result>(method, ...args);
       if (!res.ok) setNote(res.error || "Something went wrong.");
-      else if (method === "join_voice") pick("voice");
+      else if (method === "join_voice") pick("call");
     } catch (e: any) {
       setNote(String(e?.message || e));
     }
@@ -100,15 +114,66 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const onCancel = () => { if (mode === "servers" && server) setServerId(null); else closeModal(); };
 
   const titles: Record<Mode, [string, string]> = {
-    voice: ["Voice", "Current call"],
+    dms: ["Direct messages", "Your conversations"],
+    friends: ["Friends", `${(state?.friends || []).length} friends`],
+    call: ["Current call", "Voice controls"],
+    settings: ["Settings", "Accounts and the Fluxer app"],
     servers: server ? [server.name || server.id, "Voice channels"] : ["Servers", `${(state?.guilds || []).length} servers`],
-    accounts: ["Accounts", "Switch between your accounts"],
   };
   const scroller = { flex: 1, minHeight: 0, overflowY: "auto" as const, padding: "4px 8px 4px 4px" };
 
   const body = !state?.ready ? (
-    <div style={{ opacity: 0.65 }}>Fluxer is not running. Start it from the Quick Access panel.</div>
-  ) : mode === "voice" ? (
+    <Focusable flow-children="column" style={scroller}>
+      <div style={{ opacity: 0.65, marginBottom: 12 }}>Fluxer is not running.</div>
+      <Tile active disabled={busy} onClick={() => run("start")}>
+        <FaPhone />
+        <span style={{ fontWeight: 650 }}>{busy ? "Starting..." : "Start Fluxer"}</span>
+      </Tile>
+    </Focusable>
+  ) : mode === "dms" ? (
+    <Focusable flow-children="column" style={scroller}>
+      {(state.dms || []).length === 0 && <div style={{ opacity: 0.6 }}>No conversations.</div>}
+      {(state.dms || []).map((d) => {
+        const other = d.recipients[0];
+        const here = d.id === voice?.channelId;
+        return (
+          <Focusable key={d.id} flow-children="row" style={{ display: "flex", gap: 6, marginBottom: 5 }}>
+            <Tile flex onClick={() => {}}>
+              <Avatar name={d.name} status={d.recipients.length === 1 ? other?.status : undefined} />
+              <Name sub={here ? "In call" : d.recipients.length === 1 ? statusText(other?.status || "offline") : `${d.recipients.length + 1} members`} subColor={here ? ONLINE : undefined}>{d.name}</Name>
+            </Tile>
+            <Tile active={here} disabled={busy} onClick={() => (here ? pick("call") : run("join_voice", d.id))}>
+              <span style={{ width: 104, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontWeight: 650 }}>
+                <FaPhone /> {here ? "Open" : "Call"}
+              </span>
+            </Tile>
+          </Focusable>
+        );
+      })}
+    </Focusable>
+  ) : mode === "friends" ? (
+    <Focusable flow-children="column" style={scroller}>
+      {(state.friends || []).length === 0 && <div style={{ opacity: 0.6 }}>No friends yet.</div>}
+      {(state.friends || []).map((f: FluxerPerson) => {
+        const dm = (state.dms || []).find((d) => d.type === 1 && d.recipients[0]?.id === f.id);
+        return (
+          <Focusable key={f.id} flow-children="row" style={{ display: "flex", gap: 6, marginBottom: 5 }}>
+            <Tile flex onClick={() => {}}>
+              <Avatar name={f.name} status={f.status} />
+              <Name sub={statusText(f.status)}>{f.name}</Name>
+            </Tile>
+            {dm && (
+              <Tile disabled={busy} onClick={() => run("join_voice", dm.id)}>
+                <span style={{ width: 104, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontWeight: 650 }}>
+                  <FaPhone /> Call
+                </span>
+              </Tile>
+            )}
+          </Focusable>
+        );
+      })}
+    </Focusable>
+  ) : mode === "call" ? (
     <Focusable flow-children="column" style={scroller}>
       {!inCall ? (
         <div style={{ opacity: 0.62, lineHeight: 1.6 }}>Not in a voice channel. Choose one under Servers.</div>
@@ -160,7 +225,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
         const here = c.id === voice?.channelId;
         return (
           <div key={c.id} style={{ marginBottom: 5 }}>
-            <Tile flex active={here} disabled={busy} onClick={() => (here ? pick("voice") : run("join_voice", c.id))}>
+            <Tile flex active={here} disabled={busy} onClick={() => (here ? pick("call") : run("join_voice", c.id))}>
               <FaVolumeUp style={{ opacity: 0.7, flexShrink: 0 }} />
               <Name sub={here ? "Connected" : undefined} subColor={here ? ONLINE : undefined}>{c.name}</Name>
               <span style={{ width: 90, textAlign: "center", fontWeight: 650 }}>{here ? "Open" : "Join"}</span>
@@ -171,6 +236,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     </Focusable>
   ) : (
     <Focusable flow-children="column" style={scroller}>
+      <Label>ACCOUNTS</Label>
       {byInstance(state.accounts).map(([host, accounts]) => (
         <div key={host}>
           <Label>{host.toUpperCase()}</Label>
@@ -197,6 +263,11 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
           })}
         </div>
       ))}
+      <Label>FLUXER APP</Label>
+      <Tile danger disabled={busy} onClick={() => run("stop")}>
+        <FaPhoneSlash />
+        <span style={{ fontWeight: 650 }}>Stop Fluxer</span>
+      </Tile>
     </Focusable>
   );
 
@@ -221,21 +292,17 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
               <FaCommentDots size={28} color={ACCENT} /> Fluxer
             </div>
             <div style={{ fontSize: 11, letterSpacing: 0.8, fontWeight: 700, opacity: 0.48, padding: "0 10px 7px" }}>NAVIGATION</div>
-            <SidebarItem
-              active={mode === "voice"}
-              icon={<FaMicrophone />}
-              label="Voice"
-              badge={inCall ? <span style={{ width: 8, height: 8, borderRadius: "50%", background: ONLINE }} /> : undefined}
-              onPick={() => pick("voice")}
-            />
+            <SidebarItem active={mode === "dms"} icon={<FaUser />} label="Direct messages" onPick={() => pick("dms")} />
+            <SidebarItem active={mode === "friends"} icon={<FaUserFriends />} label="Friends" onPick={() => pick("friends")} />
             <SidebarItem active={mode === "servers"} icon={<FaServer />} label="Servers" onPick={() => pick("servers")} />
             <SidebarItem
-              active={mode === "accounts"}
-              icon={<FaUserFriends />}
-              label="Accounts"
-              badge={(state?.accounts.length ?? 0) > 1 ? <span style={{ fontSize: 12, opacity: 0.6 }}>{state?.accounts.length}</span> : undefined}
-              onPick={() => pick("accounts")}
+              active={mode === "call"}
+              icon={<FaPhone />}
+              label="Current call"
+              badge={inCall ? <span style={{ width: 8, height: 8, borderRadius: "50%", background: ONLINE }} /> : undefined}
+              onPick={() => pick("call")}
             />
+            <SidebarItem active={mode === "settings"} icon={<FaCog />} label="Settings" onPick={() => pick("settings")} />
             <div className="fx-xv-foot" style={{ marginTop: "auto", paddingTop: 12 }}>
               <SidebarItem active={false} icon={<FaArrowLeft />} label="Back" badge={!server || mode !== "servers" ? <span style={{ fontSize: 11, opacity: 0.5 }}>B</span> : undefined} onPick={closeModal} />
             </div>

@@ -25,6 +25,20 @@ export interface FluxerGuild {
   voiceChannels: { id: string; name: string }[];
 }
 
+export interface FluxerPerson {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface FluxerDm {
+  id: string;
+  type: number;
+  name: string;
+  recipients: FluxerPerson[];
+  lastMessageId: string | null;
+}
+
 export interface FluxerState {
   running: boolean;
   ready: boolean;
@@ -33,6 +47,8 @@ export interface FluxerState {
   active_account?: string | null;
   voice?: VoiceState | null;
   guilds?: FluxerGuild[];
+  dms?: FluxerDm[];
+  friends?: FluxerPerson[];
   error: string | null;
 }
 

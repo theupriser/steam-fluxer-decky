@@ -234,11 +234,15 @@ class Plugin:
         state["active_account"] = None
         state["voice"] = None
         state["guilds"] = []
+        state["dms"] = []
+        state["friends"] = []
         try:
             live = await self._bridge("state()")
             state["active_account"] = live.get("currentAccountKey")
             state["voice"] = live.get("voice")
             state["guilds"] = live.get("guilds", [])
+            state["dms"] = live.get("dms", [])
+            state["friends"] = live.get("friends", [])
         except Exception as e:  # logged out / app still booting
             state["error"] = str(e)
         return state

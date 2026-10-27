@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 1;
+  const VERSION = 2;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -33,7 +33,37 @@
   const media = () => find('media', ['connectToVoiceChannel', 'disconnectFromVoiceChannel']);
   const voice = () => find('voice', ['toggleSelfMute', 'toggleSelfDeaf']);
   const guilds = () => find('guilds', ['getGuildIds', 'getGuild']);
+  const users = () => find('users', ['getUser', 'getUsers', 'getCurrentUser']);
+  const rels = () => find('rels', ['getRelationships', 'getRelationship', 'isBlocked']);
+  const presence = () => find('presence', ['getStatus', 'getCustomStatus', 'isMobile']);
   const channels = () => find('channels', ['getGuildChannels', 'getPrivateChannels']);
+
+  const FRIEND = 1;
+  const DM_GROUP = 3;
+  const person = (id) => {
+    let u = null;
+    try { u = users().getUser(id); } catch { /* not cached */ }
+    const name = u && [u.globalName, u.global_name, u.username].find((v) => typeof v === 'string' && v.trim());
+    let status = 'offline';
+    try { status = presence().getStatus(id) || 'offline'; } catch { /* ignore */ }
+    return { id, name: name || id, status };
+  };
+  const social = () => {
+    const c = channels();
+    const dms = c.getPrivateChannels()
+      .filter((ch) => Array.isArray(ch.recipientIds) && ch.recipientIds.length > 0)
+      .map((ch) => {
+        const recipients = ch.recipientIds.map(person);
+        const name = ch.type === DM_GROUP && ch.name ? ch.name : recipients.map((r) => r.name).join(', ');
+        return { id: ch.id, type: ch.type, name, recipients, lastMessageId: ch.lastMessageId || null };
+      })
+      .sort((a, b) => (b.lastMessageId || '0').length - (a.lastMessageId || '0').length || (b.lastMessageId || '0').localeCompare(a.lastMessageId || '0'));
+    const friends = rels().getRelationships().filter((r) => r.type === FRIEND).map((r) => {
+      const p = person(r.userId || r.id);
+      return r.nickname ? { ...p, name: r.nickname } : p;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    return { dms, friends };
+  };
 
   const api = {
     v: VERSION,
@@ -67,6 +97,7 @@
           selfDeaf: !!v.getSelfDeaf(),
         },
         guilds: guildList,
+        ...social(),
       };
     },
     join(channelId) { media().connectToVoiceChannel(null, channelId); },
