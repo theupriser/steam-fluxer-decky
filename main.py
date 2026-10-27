@@ -499,6 +499,9 @@ class Plugin:
         """
         if self._install.get("stage") in ("download", "extract"):
             return {"ok": False, "error": "already_installing"}
+        if not source and self._is_installed():
+            # Never install a second copy next to one that is already there.
+            return {"ok": True, "already_installed": True}
         if not source and shutil.which("flatpak"):
             return await self._install_flatpak()
         dest = self._install_dir()
