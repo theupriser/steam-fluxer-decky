@@ -114,6 +114,6 @@ const MenuItem: FC<MenuItemProps & { MenuItemComponent: FC<any>; useIconAsProp: 
   useIconAsProp,
   ...props
 }) => {
-  (props as any)[useIconAsProp ? "icon" : "children"] = <FluxerLogo size={20} />;
+  (props as any)[useIconAsProp ? "icon" : "children"] = <FluxerLogo size={20} mono />;
   return <MenuItemComponent {...props} label="Fluxer" />;
 };
