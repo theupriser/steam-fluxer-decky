@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 2;
+  const VERSION = 4;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -31,6 +31,7 @@
   };
   const accounts = () => find('accounts', ['switchToAccount', 'getAccount']);
   const media = () => find('media', ['connectToVoiceChannel', 'disconnectFromVoiceChannel']);
+  const engine = () => find('engine', ['setScreenShareEnabled', 'setCameraEnabled']);
   const voice = () => find('voice', ['toggleSelfMute', 'toggleSelfDeaf']);
   const guilds = () => find('guilds', ['getGuildIds', 'getGuild']);
   const users = () => find('users', ['getUser', 'getUsers', 'getCurrentUser']);
@@ -38,6 +39,14 @@
   const presence = () => find('presence', ['getStatus', 'getCustomStatus', 'isMobile']);
   const channels = () => find('channels', ['getGuildChannels', 'getPrivateChannels']);
 
+  // The app's own authenticated HTTP client (same session, no tokens handled here).
+  const http = () => find('http', ['get', 'post', 'put', 'patch', 'delete']);
+  const displayName = (u) => (u && [u.global_name, u.globalName, u.username].find((v) => typeof v === 'string' && v.trim())) || null;
+  const personOf = (u) => {
+    let status = 'offline';
+    try { status = presence().getStatus(u.id) || 'offline'; } catch { /* ignore */ }
+    return { id: u.id, name: displayName(u) || u.id, username: u.username || null, status };
+  };
   const FRIEND = 1;
   const DM_GROUP = 3;
   const person = (id) => {
@@ -95,13 +104,56 @@
           connecting: !!m.connecting,
           selfMute: !!v.getSelfMute(),
           selfDeaf: !!v.getSelfDeaf(),
+          streaming: !!window.__fluxerDeckStream,
         },
         guilds: guildList,
         ...social(),
       };
     },
+    async friends() {
+      const r = await http().get('/users/@me/relationships');
+      const list = Array.isArray(r.body) ? r.body : [];
+      const pick = (t) => list.filter((x) => x.type === t && x.user).map((x) => {
+        const p = personOf(x.user);
+        return x.nickname ? { ...p, name: x.nickname } : p;
+      }).sort((a, b) => a.name.localeCompare(b.name));
+      return { friends: pick(1), incoming: pick(3), outgoing: pick(4) };
+    },
+    async friendRequest(tag) {
+      const [username, disc] = String(tag).trim().split('#');
+      if (!username) throw new Error('Enter a name, for example name#0000');
+      await http().post('/users/@me/relationships', { body: { username, discriminator: disc || '0000' } });
+    },
+    async friendAccept(userId) { await http().put('/users/@me/relationships/' + userId); },
+    async friendRemove(userId) { await http().delete('/users/@me/relationships/' + userId); },
+    async openDm(userId) {
+      const r = await http().post('/users/@me/channels', { body: { recipient_id: userId } });
+      return r.body && r.body.id;
+    },
+    async messages(channelId) {
+      const r = await http().get('/channels/' + channelId + '/messages', { query: { limit: 50 } });
+      const me = users().getCurrentUser();
+      return (Array.isArray(r.body) ? r.body : []).map((m) => ({
+        id: m.id,
+        author: displayName(m.author) || 'Unknown',
+        authorId: m.author && m.author.id,
+        mine: !!(me && m.author && m.author.id === me.id),
+        ts: m.timestamp,
+        content: m.content || (m.attachments && m.attachments.length ? '[attachment]' : ''),
+      })).reverse();
+    },
+    async send(channelId, content) {
+      await http().post('/channels/' + channelId + '/messages', { body: { content, nonce: String(Date.now()) } });
+    },
     join(channelId) { media().connectToVoiceChannel(null, channelId); },
     leave() { return media().disconnectFromVoiceChannel('user'); },
+    // Screen share through the app's own voice engine. Which screen/window is
+    // shared is decided by the app (Electron display capture).
+    async toggleStream() {
+      const next = !window.__fluxerDeckStream;
+      await engine().setScreenShareEnabled(next);
+      window.__fluxerDeckStream = next;
+    },
     toggleMute() { voice().toggleSelfMute(); },
     toggleDeafen() { voice().toggleSelfDeaf(); },
     switchAccount(accountKey) { return accounts().switchToAccount(accountKey); },

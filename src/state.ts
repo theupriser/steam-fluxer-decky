@@ -17,6 +17,7 @@ export interface VoiceState {
   connecting: boolean;
   selfMute: boolean;
   selfDeaf: boolean;
+  streaming?: boolean;
 }
 
 export interface FluxerGuild {

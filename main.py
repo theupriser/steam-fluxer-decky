@@ -255,11 +255,52 @@ class Plugin:
             decky.logger.error(f"bridge call {call.split('(')[0]} failed: {e}")
             return {"ok": False, "error": str(e)}
 
+    async def get_friends(self) -> dict:
+        return await self._bridge("friends()")
+
+    async def friend_request(self, tag: str) -> dict:
+        return await self._act(f"friendRequest({json.dumps(tag)})")
+
+    async def friend_accept(self, user_id: str) -> dict:
+        return await self._act(f"friendAccept({json.dumps(user_id)})")
+
+    async def friend_remove(self, user_id: str) -> dict:
+        return await self._act(f"friendRemove({json.dumps(user_id)})")
+
+    async def open_dm(self, user_id: str) -> dict:
+        try:
+            return {"ok": True, "id": await self._bridge(f"openDm({json.dumps(user_id)})")}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    async def get_messages(self, channel_id: str) -> list:
+        return await self._bridge(f"messages({json.dumps(channel_id)})")
+
+    async def send_message(self, channel_id: str, content: str) -> dict:
+        return await self._act(f"send({json.dumps(channel_id)}, {json.dumps(content)})")
+
+    async def get_window_settings(self) -> dict:
+        return await self._evaluate(
+            "window.electron.getDesktopWindowBehaviorSettings()"
+        )
+
+    async def set_window_settings(self, patch: dict) -> dict:
+        try:
+            await self._evaluate(
+                f"window.electron.setDesktopWindowBehaviorSettings({json.dumps(patch)})"
+            )
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     async def join_voice(self, channel_id: str) -> dict:
         return await self._act(f"join({json.dumps(channel_id)})")
 
     async def leave_voice(self) -> dict:
         return await self._act("leave()")
+
+    async def toggle_stream(self) -> dict:
+        return await self._act("toggleStream()")
 
     async def toggle_mute(self) -> dict:
         return await self._act("toggleMute()")

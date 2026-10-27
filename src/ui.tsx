@@ -197,3 +197,100 @@ export const SIDEBAR_FIT = `.fx-xv-side::-webkit-scrollbar { display: none; }
   .fx-xv-item { padding-top: 7px !important; padding-bottom: 7px !important; margin-bottom: 3px !important; }
   .fx-xv-foot { padding-top: 6px !important; }
 }`;
+
+// --- shared people widgets -------------------------------------------------
+
+const STATUS_COLOR: Record<string, string> = { online: ONLINE, idle: "#f0b232", dnd: DANGER };
+
+export const statusText = (s: string) => (s === "dnd" ? "Do not disturb" : s.charAt(0).toUpperCase() + s.slice(1));
+
+export const Avatar: FC<{ name: string; status?: string; size?: number }> = ({ name, status, size = 38 }) => (
+  <span style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: "linear-gradient(135deg,#4641d9,#8b5cf6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+        fontSize: size * 0.4,
+      }}
+    >
+      {(name || "?")[0]?.toUpperCase()}
+    </span>
+    {status && (
+      <span
+        style={{
+          position: "absolute",
+          right: -1,
+          bottom: -1,
+          width: 12,
+          height: 12,
+          borderRadius: "50%",
+          border: "2px solid #11151d",
+          background: STATUS_COLOR[status] || "#80848e",
+        }}
+      />
+    )}
+  </span>
+);
+
+// Small filter / action button used on the Friends bar and in rows.
+export const Btn: FC<{ onClick: () => void; on?: boolean; grow?: boolean; disabled?: boolean }> = ({ onClick, children, on, grow, disabled }) => {
+  const [focused, setFocused] = useState(false);
+  const act = disabled ? () => {} : onClick;
+  return (
+    <Focusable
+      noFocusRing
+      onClick={act}
+      onActivate={act}
+      {...focusProps(setFocused)}
+      style={{
+        ...(grow ? { flex: 1, minWidth: 0 } : { flexShrink: 0 }),
+        display: "flex",
+        alignItems: "center",
+        justifyContent: grow ? "flex-start" : "center",
+        gap: 8,
+        minHeight: 44,
+        padding: "0 12px",
+        borderRadius: 9,
+        fontWeight: 600,
+        opacity: disabled ? 0.5 : 1,
+        background: on ? "rgba(70,65,217,.8)" : focused ? "rgba(70,65,217,.32)" : "rgba(255,255,255,.05)",
+        ...listHalo(focused),
+      }}
+    >
+      {children}
+    </Focusable>
+  );
+};
+
+// Icon-sized button for the call panel at the bottom of the sidebar.
+export const IconBtn: FC<{ onClick: () => void; on?: boolean; danger?: boolean; disabled?: boolean }> = ({ onClick, children, on, danger, disabled }) => {
+  const [focused, setFocused] = useState(false);
+  const act = disabled ? () => {} : onClick;
+  return (
+    <Focusable
+      noFocusRing
+      onClick={act}
+      onActivate={act}
+      {...focusProps(setFocused)}
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: 36,
+        borderRadius: 8,
+        opacity: disabled ? 0.5 : 1,
+        background: danger ? "rgba(237,66,69,.4)" : on ? "rgba(237,66,69,.28)" : focused ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.07)",
+        ...focusHalo(focused, 1.04),
+      }}
+    >
+      {children}
+    </Focusable>
+  );
+};
