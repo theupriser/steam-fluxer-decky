@@ -71,6 +71,8 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Mode | null>(null);
+  // Second level of Servers: the server whose channels are shown (null = list).
+  const [serverId, setServerId] = useState<string | null>(null);
 
   const voice = state?.voice;
   const inCall = !!voice?.channelId;
@@ -84,7 +86,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     try {
       const res = await call<string[], Result>(method, ...args);
       if (!res.ok) setNote(res.error || "Something went wrong.");
-      else if (method === "join_voice") setPicked("voice");
+      else if (method === "join_voice") pick("voice");
     } catch (e: any) {
       setNote(String(e?.message || e));
     }
@@ -92,9 +94,14 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
     setBusy(false);
   };
 
+  const server = (state?.guilds || []).find((g) => g.id === serverId) || null;
+  const pick = (m: Mode) => { setServerId(null); setPicked(m); };
+  // B goes up one level (channels -> server list) before closing the view.
+  const onCancel = () => { if (mode === "servers" && server) setServerId(null); else closeModal(); };
+
   const titles: Record<Mode, [string, string]> = {
     voice: ["Voice", "Current call"],
-    servers: ["Servers", "Pick a voice channel to join"],
+    servers: server ? [server.name || server.id, "Voice channels"] : ["Servers", `${(state?.guilds || []).length} servers`],
     accounts: ["Accounts", "Switch between your accounts"],
   };
   const scroller = { flex: 1, minHeight: 0, overflowY: "auto" as const, padding: "4px 8px 4px 4px" };
@@ -128,27 +135,39 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
         </>
       )}
     </Focusable>
-  ) : mode === "servers" ? (
+  ) : mode === "servers" && !server ? (
     <Focusable flow-children="column" style={scroller}>
       {(state.guilds || []).length === 0 && <div style={{ opacity: 0.6 }}>No servers found.</div>}
-      {(state.guilds || []).map((g) => (
-        <div key={g.id}>
-          <Label>{(g.name || g.id).toUpperCase()}</Label>
-          {g.voiceChannels.length === 0 && <div style={{ opacity: 0.5, padding: "0 4px 8px", fontSize: 13 }}>No voice channels.</div>}
-          {g.voiceChannels.map((c) => {
-            const here = c.id === voice?.channelId;
-            return (
-              <div key={c.id} style={{ marginBottom: 5 }}>
-                <Tile flex active={here} disabled={busy} onClick={() => (here ? setPicked("voice") : run("join_voice", c.id))}>
-                  <FaVolumeUp style={{ opacity: 0.7, flexShrink: 0 }} />
-                  <Name sub={here ? "Connected" : undefined} subColor={here ? ONLINE : undefined}>{c.name}</Name>
-                  <span style={{ width: 90, textAlign: "center", fontWeight: 650 }}>{here ? "Open" : "Join"}</span>
-                </Tile>
-              </div>
-            );
-          })}
-        </div>
-      ))}
+      {(state.guilds || []).map((g) => {
+        const here = g.voiceChannels.some((c) => c.id === voice?.channelId);
+        return (
+          <div key={g.id} style={{ marginBottom: 5 }}>
+            <Tile flex active={here} onClick={() => setServerId(g.id)}>
+              <span style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,#4641d9,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>
+                {(g.name || "?")[0]?.toUpperCase()}
+              </span>
+              <Name sub={here ? "You are in a call here" : `${g.voiceChannels.length} voice channels`} subColor={here ? ONLINE : undefined}>{g.name || g.id}</Name>
+              <span style={{ opacity: 0.5 }}>›</span>
+            </Tile>
+          </div>
+        );
+      })}
+    </Focusable>
+  ) : mode === "servers" && server ? (
+    <Focusable flow-children="column" style={scroller}>
+      {server.voiceChannels.length === 0 && <div style={{ opacity: 0.6 }}>No voice channels.</div>}
+      {server.voiceChannels.map((c) => {
+        const here = c.id === voice?.channelId;
+        return (
+          <div key={c.id} style={{ marginBottom: 5 }}>
+            <Tile flex active={here} disabled={busy} onClick={() => (here ? pick("voice") : run("join_voice", c.id))}>
+              <FaVolumeUp style={{ opacity: 0.7, flexShrink: 0 }} />
+              <Name sub={here ? "Connected" : undefined} subColor={here ? ONLINE : undefined}>{c.name}</Name>
+              <span style={{ width: 90, textAlign: "center", fontWeight: 650 }}>{here ? "Open" : "Join"}</span>
+            </Tile>
+          </div>
+        );
+      })}
     </Focusable>
   ) : (
     <Focusable flow-children="column" style={scroller}>
@@ -182,7 +201,7 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   );
 
   return (
-    <ModalRootAny closeModal={closeModal} onCancel={closeModal} bAllowFullSize>
+    <ModalRootAny closeModal={closeModal} onCancel={onCancel} bAllowFullSize>
       <div style={{ display: "contents" }}>
         {/* Marker OUTSIDE the panel: inside, hiding Steam's frame would also
             clear our own background and make the view transparent. */}
@@ -207,18 +226,18 @@ const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
               icon={<FaMicrophone />}
               label="Voice"
               badge={inCall ? <span style={{ width: 8, height: 8, borderRadius: "50%", background: ONLINE }} /> : undefined}
-              onPick={() => setPicked("voice")}
+              onPick={() => pick("voice")}
             />
-            <SidebarItem active={mode === "servers"} icon={<FaServer />} label="Servers" onPick={() => setPicked("servers")} />
+            <SidebarItem active={mode === "servers"} icon={<FaServer />} label="Servers" onPick={() => pick("servers")} />
             <SidebarItem
               active={mode === "accounts"}
               icon={<FaUserFriends />}
               label="Accounts"
               badge={(state?.accounts.length ?? 0) > 1 ? <span style={{ fontSize: 12, opacity: 0.6 }}>{state?.accounts.length}</span> : undefined}
-              onPick={() => setPicked("accounts")}
+              onPick={() => pick("accounts")}
             />
             <div className="fx-xv-foot" style={{ marginTop: "auto", paddingTop: 12 }}>
-              <SidebarItem active={false} icon={<FaArrowLeft />} label="Back" badge={<span style={{ fontSize: 11, opacity: 0.5 }}>B</span>} onPick={closeModal} />
+              <SidebarItem active={false} icon={<FaArrowLeft />} label="Back" badge={!server || mode !== "servers" ? <span style={{ fontSize: 11, opacity: 0.5 }}>B</span> : undefined} onPick={closeModal} />
             </div>
           </Focusable>
           <Focusable
