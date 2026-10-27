@@ -51,7 +51,7 @@ const PersonRow: FC<{
     <div style={{ marginBottom: 5 }}>
       <Focusable flow-children="row" style={{ display: "flex", gap: 6 }}>
         <Btn grow onClick={pending ? () => {} : () => withDm((id) => onChat(id, person.name))}>
-          <Avatar name={person.name} status={pending ? undefined : person.status} />
+          <Avatar name={person.name} src={person.avatar} status={pending ? undefined : person.status} />
           <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: "block", fontWeight: 650, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{person.name}</span>
             <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 400, opacity: 0.62 }}>{line}</span>

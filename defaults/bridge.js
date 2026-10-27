@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 4;
+  const VERSION = 5;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -45,7 +45,14 @@
   const personOf = (u) => {
     let status = 'offline';
     try { status = presence().getStatus(u.id) || 'offline'; } catch { /* ignore */ }
-    return { id: u.id, name: displayName(u) || u.id, username: u.username || null, status };
+    return { id: u.id, name: displayName(u) || u.id, username: u.username || null, status, avatar: avatarUrl(u) };
+  };
+  // <instance origin>/media/avatars/<userId>/<hash>.webp, like the app's own <img>s.
+  const origin = () => String(accounts().currentAccountKey || '').split('/api')[0];
+  const avatarUrl = (u) => {
+    if (!u || !u.id || !u.avatar) return null;
+    const hash = String(u.avatar).replace(/^a_/, '');
+    return origin() + '/media/avatars/' + u.id + '/' + hash + '.webp?size=80';
   };
   const FRIEND = 1;
   const DM_GROUP = 3;
@@ -55,7 +62,7 @@
     const name = u && [u.globalName, u.global_name, u.username].find((v) => typeof v === 'string' && v.trim());
     let status = 'offline';
     try { status = presence().getStatus(id) || 'offline'; } catch { /* ignore */ }
-    return { id, name: name || id, status };
+    return { id, name: name || id, status, avatar: avatarUrl(u) };
   };
   const social = () => {
     const c = channels();
@@ -137,6 +144,7 @@
         id: m.id,
         author: displayName(m.author) || 'Unknown',
         authorId: m.author && m.author.id,
+        avatar: avatarUrl(m.author),
         mine: !!(me && m.author && m.author.id === me.id),
         ts: m.timestamp,
         content: m.content || (m.attachments && m.attachments.length ? '[attachment]' : ''),

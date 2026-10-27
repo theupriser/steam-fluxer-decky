@@ -37,6 +37,9 @@ ACCOUNTS_JS = """
       userId: r.userId || null,
       displayName: name || r.userId || null,
       instanceHost: host(inst.webAppEndpoint || inst.apiEndpoint),
+      avatar: (u.avatar && r.userId && (inst.webAppEndpoint || inst.apiEndpoint))
+        ? new URL(inst.webAppEndpoint || inst.apiEndpoint).origin + '/media/avatars/' + r.userId + '/' + String(u.avatar).replace(/^a_/, '') + '.webp?size=80'
+        : null,
       lastActive: typeof r.lastActive === 'number' ? r.lastActive : 0,
       isValid: r.isValid !== false,
     };

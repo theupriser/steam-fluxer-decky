@@ -204,7 +204,9 @@ const STATUS_COLOR: Record<string, string> = { online: ONLINE, idle: "#f0b232", 
 
 export const statusText = (s: string) => (s === "dnd" ? "Do not disturb" : s.charAt(0).toUpperCase() + s.slice(1));
 
-export const Avatar: FC<{ name: string; status?: string; size?: number }> = ({ name, status, size = 38 }) => (
+export const Avatar: FC<{ name: string; status?: string; size?: number; src?: string | null }> = ({ name, status, size = 38, src }) => {
+  const [failed, setFailed] = useState(false);
+  return (
   <span style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
     <span
       style={{
@@ -219,7 +221,11 @@ export const Avatar: FC<{ name: string; status?: string; size?: number }> = ({ n
         fontSize: size * 0.4,
       }}
     >
-      {(name || "?")[0]?.toUpperCase()}
+      {src && !failed ? (
+        <img src={src} width={size} height={size} onError={() => setFailed(true)} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
+      ) : (
+        (name || "?")[0]?.toUpperCase()
+      )}
     </span>
     {status && (
       <span
@@ -236,7 +242,8 @@ export const Avatar: FC<{ name: string; status?: string; size?: number }> = ({ n
       />
     )}
   </span>
-);
+  );
+};
 
 // Small filter / action button used on the Friends bar and in rows.
 export const Btn: FC<{ onClick: () => void; on?: boolean; grow?: boolean; disabled?: boolean }> = ({ onClick, children, on, grow, disabled }) => {

@@ -7,6 +7,7 @@ export interface ChatMessage {
   id: string;
   author: string;
   authorId: string | null;
+  avatar?: string | null;
   mine: boolean;
   ts: string;
   content: string;
@@ -29,7 +30,7 @@ const Message: FC<{ m: ChatMessage }> = ({ m }) => {
       onGamepadBlur={() => setFocused(false)}
       style={{ display: "flex", gap: 10, padding: "7px 8px", marginBottom: 3, borderRadius: 8, background: focused ? "rgba(255,255,255,.07)" : "transparent", ...listHalo(focused) }}
     >
-      <Avatar name={m.author} size={34} />
+      <Avatar name={m.author} src={m.avatar} size={34} />
       <div style={{ minWidth: 0, flex: 1 }}>
         <div>
           <span style={{ fontWeight: 700, color: m.mine ? "#a5a2ff" : undefined }}>{m.author}</span>

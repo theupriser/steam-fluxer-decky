@@ -149,7 +149,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
         return (
           <Focusable key={d.id} flow-children="row" style={{ display: "flex", gap: 6, marginBottom: 5 }}>
             <Tile flex onClick={() => openChat(d.id, d.name)}>
-              <Avatar name={d.name} status={d.recipients.length === 1 ? other?.status : undefined} />
+              <Avatar name={d.name} src={d.recipients.length === 1 ? other?.avatar : null} status={d.recipients.length === 1 ? other?.status : undefined} />
               <Name sub={here ? "In call" : d.recipients.length === 1 ? statusText(other?.status || "offline") : `${d.recipients.length + 1} members`} subColor={here ? ONLINE : undefined}>{d.name}</Name>
             </Tile>
             <Tile active={here} disabled={busy || here} onClick={() => joinCall(d.id)}>
@@ -205,7 +205,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
             return (
               <div key={a.accountKey} style={{ marginBottom: 5 }}>
                 <Tile flex active={isActive} disabled={busy || !a.isValid} onClick={() => (isActive ? undefined : run("switch_account", a.accountKey))}>
-                  <Avatar name={a.displayName || a.userId || "?"} />
+                  <Avatar name={a.displayName || a.userId || "?"} src={a.avatar} />
                   <Name sub={!a.isValid ? "Login expired" : isActive ? "Active" : undefined} subColor={!a.isValid ? DANGER : isActive ? ONLINE : undefined}>
                     {a.displayName || a.userId}
                   </Name>
@@ -272,7 +272,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
               )}
               <SidebarItem
                 active={mode === "accounts"}
-                icon={<Avatar name={active?.displayName || "?"} size={28} />}
+                icon={<Avatar name={active?.displayName || "?"} src={active?.avatar} size={28} />}
                 label={active?.displayName || "Account"}
                 badge={<FaChevronDown style={{ opacity: 0.5 }} />}
                 onPick={() => pick("accounts")}

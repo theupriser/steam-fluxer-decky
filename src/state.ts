@@ -8,6 +8,7 @@ export interface FluxerAccount {
   instanceHost: string | null;
   lastActive: number;
   isValid: boolean;
+  avatar?: string | null;
 }
 
 export interface VoiceState {
@@ -30,6 +31,7 @@ export interface FluxerPerson {
   id: string;
   name: string;
   status: string;
+  avatar?: string | null;
 }
 
 export interface FluxerDm {
