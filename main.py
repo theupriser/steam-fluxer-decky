@@ -76,6 +76,8 @@ class Plugin:
     async def _main(self):
         self._session = ClientSession(timeout=ClientTimeout(total=5))
         decky.logger.info("Fluxer plugin loaded")
+        if self._read_settings().get("autostart"):
+            asyncio.create_task(self.start())
 
     async def _unload(self):
         # Fluxer outlives plugin reloads: killing it here would drop a running
@@ -282,16 +284,30 @@ class Plugin:
     async def send_message(self, channel_id: str, content: str) -> dict:
         return await self._act(f"send({json.dumps(channel_id)}, {json.dumps(content)})")
 
-    async def get_window_settings(self) -> dict:
-        return await self._evaluate(
-            "window.electron.getDesktopWindowBehaviorSettings()"
-        )
+    # --- plugin settings -------------------------------------------------
 
-    async def set_window_settings(self, patch: dict) -> dict:
+    def _settings_path(self) -> str:
+        return os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
+
+    def _read_settings(self) -> dict:
         try:
-            await self._evaluate(
-                f"window.electron.setDesktopWindowBehaviorSettings({json.dumps(patch)})"
-            )
+            with open(self._settings_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    async def get_settings(self) -> dict:
+        return {"autostart": bool(self._read_settings().get("autostart", False))}
+
+    async def set_settings(self, patch: dict) -> dict:
+        try:
+            settings = self._read_settings()
+            if "autostart" in patch:
+                settings["autostart"] = bool(patch["autostart"])
+            os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
+            with open(self._settings_path(), "w", encoding="utf-8") as f:
+                json.dump(settings, f)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}

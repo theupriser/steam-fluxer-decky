@@ -4,10 +4,8 @@ import { FC, useEffect, useState } from "react";
 import { FluxerState, refreshState } from "./state";
 import { DANGER, ONLINE, Tile } from "./ui";
 
-interface WindowSettings {
-  showTrayIcon: boolean;
-  closeToTray: boolean;
-  startMinimized: boolean;
+interface PluginSettings {
+  autostart: boolean;
 }
 
 const Heading: FC = ({ children }) => (
@@ -43,26 +41,30 @@ const Switch: FC<{ label: string; hint: string; value: boolean; disabled?: boole
   </div>
 );
 
-/** Fluxer's own settings: app process and the desktop window behaviour. */
+/**
+ * Settings that apply in Game Mode. Fluxer's own desktop window options
+ * (tray icon, close to tray) are left out: the window is never shown here and
+ * the plugin always starts Fluxer hidden.
+ */
 export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
-  const [win, setWin] = useState<WindowSettings | null>(null);
+  const [settings, setSettings] = useState<PluginSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const ready = !!state?.ready;
 
   const load = () =>
-    call<[], WindowSettings>("get_window_settings")
-      .then((r) => setWin(r))
-      .catch(() => setWin(null));
+    call<[], PluginSettings>("get_settings")
+      .then(setSettings)
+      .catch(() => setSettings(null));
   useEffect(() => {
-    if (ready) load();
-  }, [ready]);
+    load();
+  }, []);
 
-  const set = async (patch: Partial<WindowSettings>) => {
+  const set = async (patch: Partial<PluginSettings>) => {
     setBusy(true);
     setNote(null);
     try {
-      const r = await call<[Partial<WindowSettings>], { ok: boolean; error?: string }>("set_window_settings", patch);
+      const r = await call<[Partial<PluginSettings>], { ok: boolean; error?: string }>("set_settings", patch);
       if (!r.ok) setNote(r.error || "Could not change the setting.");
     } catch (e: any) {
       setNote(String(e?.message || e));
@@ -93,12 +95,16 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
         {ready ? "Fluxer runs hidden in the background; this view talks to it." : "Fluxer is not running."}
       </div>
 
-      {ready && win && (
+      {settings && (
         <>
-          <Heading>Window and startup</Heading>
-          <Switch label="Start hidden" hint="Launch without showing a window (needed for Game Mode)" value={win.startMinimized} disabled={busy} onChange={(v) => set({ startMinimized: v })} />
-          <Switch label="Show tray icon" hint="Required for hidden start" value={win.showTrayIcon} disabled={busy} onChange={(v) => set({ showTrayIcon: v })} />
-          <Switch label="Close to tray" hint="Closing the window keeps Fluxer running" value={win.closeToTray} disabled={busy} onChange={(v) => set({ closeToTray: v })} />
+          <Heading>Startup</Heading>
+          <Switch
+            label="Start Fluxer with Steam"
+            hint="Launch Fluxer hidden when Steam starts, so it is ready from the Steam menu"
+            value={settings.autostart}
+            disabled={busy}
+            onChange={(v) => set({ autostart: v })}
+          />
         </>
       )}
       {note && <div style={{ color: DANGER, margin: "8px 4px" }}>{note}</div>}
