@@ -1,6 +1,6 @@
 import { call } from "@decky/api";
 import { Focusable, ModalRoot, NavEntryPositionPreferences, showModal } from "@decky/ui";
-import { FC, useState } from "react";
+import { FC, useEffect, useRef, useState } from "react";
 import {
   FaArrowLeft, FaChevronDown, FaCog, FaDesktop, FaMicrophone, FaMicrophoneSlash, FaPhone, FaPhoneSlash,
   FaComment, FaServer, FaUser, FaUserFriends, FaVolumeMute, FaVolumeUp,
@@ -131,6 +131,40 @@ const Name: FC<{ sub?: string; subColor?: string }> = ({ children, sub, subColor
   </span>
 );
 
+// A question from Fluxer (for example "you're already connected to this voice
+// channel from another device"). Fluxer shows it in its hidden window, so it is
+// shown here as a dialog over the view, like in the real app.
+const PromptModal: FC<{ closeModal?: () => void }> = ({ closeModal }) => {
+  const state = useFluxerState();
+  const prompt = state?.prompt;
+  const [busy, setBusy] = useState(false);
+  const answer = async (index: number) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await call("answer_prompt", index);
+    } catch { /* the question may already be gone */ }
+    await refreshState();
+    setTimeout(refreshState, 800);
+    setBusy(false);
+  };
+  // B answers with the last option, which is the "do nothing" choice.
+  const cancel = () => { if (prompt) answer(prompt.buttons.length - 1); else closeModal?.(); };
+  return (
+    <ModalRootAny onCancel={cancel} closeModal={closeModal}>
+      <div style={{ fontSize: 19, fontWeight: 800, marginBottom: 8 }}>{prompt?.title || "Fluxer asks"}</div>
+      <div style={{ lineHeight: 1.5, opacity: 0.85, marginBottom: 16 }}>{prompt?.text}</div>
+      <Focusable flow-children="column" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {(prompt?.buttons || []).map((b, i) => (
+          <Tile key={b.index} flex active={i === 0} disabled={busy} onClick={() => answer(b.index)}>
+            <span style={{ fontWeight: 650 }}>{b.label}</span>
+          </Tile>
+        ))}
+      </Focusable>
+    </ModalRootAny>
+  );
+};
+
 export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const state = useFluxerState();
   const [note, setNote] = useState<string | null>(null);
@@ -145,6 +179,22 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const inCall = !!voice?.channelId;
   const active = state?.accounts.find((a) => a.accountKey === state.active_account) || state?.accounts[0];
   const server = (state?.guilds || []).find((g) => g.id === serverId) || null;
+
+  // Open the question dialog when Fluxer asks one, close it once it is answered.
+  const promptModal = useRef<{ Close: () => void } | null>(null);
+  const hasPrompt = !!state?.prompt;
+  useEffect(() => {
+    if (hasPrompt && !promptModal.current) {
+      const m = showModal(<PromptModal closeModal={() => m.Close()} />, undefined, {
+        fnOnClose: () => { promptModal.current = null; },
+      } as any);
+      promptModal.current = m;
+    } else if (!hasPrompt && promptModal.current) {
+      promptModal.current.Close();
+      promptModal.current = null;
+    }
+  }, [hasPrompt]);
+  useEffect(() => () => { promptModal.current?.Close(); promptModal.current = null; }, []);
 
   const run = async (method: string, ...args: string[]): Promise<boolean> => {
     if (busy) return false;
@@ -181,7 +231,13 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const openChat = (channelId: string, name: string) => { setMode("dms"); setChat({ channelId, name, sub: "Private message" }); };
   // A server's text channel opens in place: B returns to that server's page.
   const openChannel = (channelId: string, name: string) => setChat({ channelId, name: `#${name}`, sub: server?.name || "Text channel" });
-  const joinCall = (channelId: string) => run("join_voice", channelId);
+  const joinCall = async (channelId: string) => {
+    await run("join_voice", channelId);
+    // A question from Fluxer (already connected elsewhere) can appear a moment later.
+    setTimeout(refreshState, 600);
+    setTimeout(refreshState, 1500);
+    setTimeout(refreshState, 3000);
+  };
 
   const titles: Record<Mode, [string, string]> = {
     dms: ["Direct messages", "Your conversations"],

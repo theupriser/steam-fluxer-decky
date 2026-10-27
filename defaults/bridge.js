@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 11;
+  const VERSION = 14;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -116,6 +116,31 @@
     return { dms, friends };
   };
 
+  // A confirmation modal Fluxer is showing in its (hidden) window, for example
+  // "you're already connected to this voice channel from another device".
+  // Nobody can answer it there, so its text and buttons are passed on.
+  const modalButtons = (root) => {
+    const footer = root.querySelector('[data-flx$=".modal-footer"]');
+    return [...(footer || root).querySelectorAll('button')].filter((b) => b.textContent.trim());
+  };
+  // The page is hidden, so closed dialogs can stay behind as empty shells: only
+  // one that still has text is a real question, and the newest one is on top.
+  const openModal = () => {
+    const roots = [...document.querySelectorAll('[data-flx$=".modal-root"]')].filter((r) => r.innerText.trim() && modalButtons(r).length);
+    return roots.length ? roots[roots.length - 1] : null;
+  };
+  const prompt = () => {
+    const root = openModal();
+    if (!root) return null;
+    const text = (sel) => { const el = root.querySelector(sel); return el ? el.textContent.trim() : ''; };
+    return {
+      id: root.getAttribute('data-flx'),
+      title: text('[data-flx$=".modal-header"]'),
+      text: text('[data-flx$=".modal-content"]'),
+      buttons: modalButtons(root).map((b, i) => ({ index: i, label: b.textContent.trim() })),
+    };
+  };
+
   const api = {
     v: VERSION,
     // Each part is read on its own: a store that changed in a Fluxer update
@@ -171,6 +196,7 @@
         voice: voiceState,
         guilds: guildList,
         ...social_,
+        prompt: part('prompt', prompt, null),
         problems,
         fluxerVersion: (/Fluxer\/([\d.]+)/.exec(navigator.userAgent) || [])[1] || null,
       };
@@ -227,7 +253,18 @@
     async send(channelId, content) {
       await request('post', '/channels/' + channelId + '/messages', { body: { content, nonce: String(Date.now()) } });
     },
-    join(channelId) { media().connectToVoiceChannel(null, channelId); },
+    answerPrompt(index) {
+      const root = openModal();
+      if (!root) throw new Error('the question is no longer open');
+      const b = modalButtons(root)[index];
+      if (!b) throw new Error('no such answer');
+      b.click();
+    },
+    join(channelId) {
+      // Another join would only stack a second question on the first.
+      if (openModal()) throw new Error('Fluxer is waiting for an answer first');
+      media().connectToVoiceChannel(null, channelId);
+    },
     leave() { return media().disconnectFromVoiceChannel('user'); },
     // Screen share. Fluxer asks for a screen with getDisplayMedia; under
     // gamescope that capture is black, so while sharing we answer that call with
@@ -279,12 +316,26 @@
         };
         ctl.closeAudio = () => { try { awriter.close(); } catch { /* ignore */ } try { agen.stop(); } catch { /* ignore */ } };
       }
-      const decoder = new VideoDecoder({
-        output: (frame) => { ctl.frames += 1; write(frame); },
-        error: (e) => { ctl.error = String(e && e.message || e); },
-      });
-      decoder.configure({ codec: 'avc1.42E034', optimizeForLatency: true });
+      // Decoding is done in software and the decoder rebuilds itself: Fluxer's
+      // GPU process can crash on this device (it did, when a share started), and
+      // a hardware decoder dies with it. After a rebuild, frames resume at the
+      // next key frame (every two seconds).
+      let decoder = null;
       let gotKey = false;
+      const buildDecoder = () => {
+        decoder = new VideoDecoder({
+          output: (frame) => { ctl.frames += 1; write(frame); },
+          error: (e) => {
+            ctl.error = String((e && e.message) || e);
+            gotKey = false;
+            if (!ctl.closed) setTimeout(() => { if (!ctl.closed) buildDecoder(); }, 300);
+          },
+        });
+        decoder.configure({ codec: 'avc1.42E034', optimizeForLatency: true, hardwareAcceleration: 'prefer-software' });
+        ctl.decoder = decoder;
+        ctl.rebuilds = (ctl.rebuilds || 0) + 1;
+      };
+      buildDecoder();
       let ts = 0;
       const ws = new WebSocket('ws://127.0.0.1:' + port + '/stream');
       ws.binaryType = 'arraybuffer';
@@ -296,6 +347,7 @@
         }
         const d = all.subarray(1);
         const key = hasKey(d);
+        if (decoder.state === 'closed') { gotKey = false; buildDecoder(); }
         if (!gotKey && !key) return;
         gotKey = true;
         try {
@@ -310,7 +362,7 @@
       });
       const md = navigator.mediaDevices;
       const original = md.getDisplayMedia;
-      Object.assign(ctl, { ws, decoder, md, original });
+      Object.assign(ctl, { ws, md, original });
       window.__fluxerDeckStreamCtl = ctl;
       // publish=false decodes only (for tests): nothing is shared.
       if (!publish) return;
@@ -334,6 +386,7 @@
       window.__fluxerDeckStreamCtl = null;
       try { ctl.md.getDisplayMedia = ctl.original; } catch { /* ignore */ }
       try { ctl.ws.close(); } catch { /* ignore */ }
+      ctl.closed = true;
       try { ctl.decoder.close(); } catch { /* ignore */ }
       if (ctl.closeTrack) ctl.closeTrack();
       if (ctl.closeAudio) ctl.closeAudio();
@@ -341,7 +394,7 @@
     // Frames decoded so far: tells "link works, screen is idle" from "no link".
     streamStats() {
       const c = window.__fluxerDeckStreamCtl;
-      return c ? { frames: c.frames, audioFrames: c.audioFrames, error: c.error } : null;
+      return c ? { frames: c.frames, audioFrames: c.audioFrames, rebuilds: c.rebuilds, error: c.error } : null;
     },
     toggleMute() { voice().toggleSelfMute(); },
     toggleDeafen() { voice().toggleSelfDeaf(); },

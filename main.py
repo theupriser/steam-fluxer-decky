@@ -419,6 +419,7 @@ class Plugin:
             state["guilds"] = live.get("guilds", [])
             state["dms"] = live.get("dms", [])
             state["friends"] = live.get("friends", [])
+            state["prompt"] = live.get("prompt")
             state["problems"] = live.get("problems", [])
             state["fluxer_version"] = live.get("fluxerVersion")
         except Exception as e:  # logged out / app still booting
@@ -939,6 +940,9 @@ class Plugin:
 
     async def toggle_stream(self) -> dict:
         return await (self.stop_stream() if self._stream is not None else self.start_stream())
+
+    async def answer_prompt(self, index: int) -> dict:
+        return await self._act(f"answerPrompt({int(index)})")
 
     async def toggle_mute(self) -> dict:
         return await self._act("toggleMute()")

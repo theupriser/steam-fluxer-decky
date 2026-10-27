@@ -50,9 +50,17 @@ export interface FluxerDm {
   lastMessageId: string | null;
 }
 
+export interface FluxerPrompt {
+  id: string;
+  title: string;
+  text: string;
+  buttons: { index: number; label: string }[];
+}
+
 export interface FluxerState {
   installed?: boolean;
   fluxer_version?: string | null;
+  prompt?: FluxerPrompt | null;
   problems?: { part: string; error: string }[];
   running: boolean;
   ready: boolean;
