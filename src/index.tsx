@@ -12,7 +12,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { FaDesktop, FaMicrophone, FaMicrophoneSlash, FaPhoneSlash, FaVolumeMute, FaVolumeUp } from "react-icons/fa";
 import { FluxerLogo } from "./FluxerLogo";
 import { ONLINE, focusHalo } from "./ui";
-import { openFluxerView } from "./FluxerView";
+import { closeFluxerView, openFluxerView } from "./FluxerView";
 import { FLUXER_ROUTE, patchMenu } from "./menuPatch";
 import { refreshState, useFluxerState } from "./state";
 
@@ -140,6 +140,7 @@ export default definePlugin(() => {
     icon: <FluxerLogo size={20} />,
     onDismount() {
       clearTimeout(autostartTimer);
+      closeFluxerView();
       unpatchMenu();
       routerHook.removeRoute(FLUXER_ROUTE);
     },

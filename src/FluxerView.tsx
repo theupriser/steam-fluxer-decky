@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import { Focusable, ModalRoot, NavEntryPositionPreferences, showModal } from "@decky/ui";
+import { Focusable, ModalRoot, NavEntryPositionPreferences, Router, showModal } from "@decky/ui";
 import { FC, useEffect, useRef, useState } from "react";
 import {
   FaArrowLeft, FaChevronDown, FaCog, FaDesktop, FaMicrophone, FaMicrophoneSlash, FaPhone, FaPhoneSlash,
@@ -28,10 +28,31 @@ const getMainMenuWindow = (): Window | null => {
   return (tree?.Root?.Element || tree?.m_Root?.m_element)?.ownerDocument?.defaultView ?? null;
 };
 
+// Keeps the running game from receiving the view's button presses. Steam does
+// this itself for its own menus by marking an overlay as active for the game;
+// the view is a modal in the main window, which Steam does not count as one.
+const OVERLAY_HIDDEN = 0;
+const OVERLAY_ACTIVE = 2;
+const setGameOverlay = (state: number) => {
+  try {
+    const gameid = (Router as any).MainRunningApp?.gameid;
+    if (gameid) (window as any).SteamClient.Overlay.SetOverlayState(String(gameid), state);
+  } catch (e) {
+    console.log("Fluxer: could not set the overlay state", e);
+  }
+};
+
 // State of the one open view. If Steam never reports the modal as closed, the
 // next request closes the stale one and opens a fresh view: a missed close
 // must never lock the view out.
 let current: { close: () => void; finish: () => void } | null = null;
+
+/** Closes the view if it is open (plugin unload), releasing the game's input. */
+export const closeFluxerView = () => {
+  if (!current) return;
+  try { current.close(); } catch { /* already gone */ }
+  current.finish();
+};
 
 /** Opens the Fluxer view from anywhere (QAM panel, Steam main menu). */
 export const openFluxerView = () => {
@@ -43,9 +64,18 @@ export const openFluxerView = () => {
   open = true;
   console.log("Fluxer: opening the view");
   let unwatch = () => {};
+  let keepOverlay: ReturnType<typeof setInterval> | undefined;
+  let menuWinRef: Window | null = null;
   const finish = () => {
     unwatch();
     unwatch = () => {};
+    if (keepOverlay) {
+      clearInterval(keepOverlay);
+      keepOverlay = undefined;
+      // Hand input back to the game, unless Steam's own menu is up (it owns the
+      // overlay state then and releases it itself).
+      if (!menuWinRef || menuWinRef.document.hidden) setGameOverlay(OVERLAY_HIDDEN);
+    }
     if (current === handle) {
       current = null;
       open = false;
@@ -55,6 +85,7 @@ export const openFluxerView = () => {
   current = handle;
   try {
     const menuWin = getMainMenuWindow();
+    menuWinRef = menuWin;
     const openedAt = Date.now();
     const modal = showModal(<FluxerModal closeModal={() => { modal.Close(); finish(); }} />, undefined, {
       fnOnClose: () => {
@@ -63,6 +94,10 @@ export const openFluxerView = () => {
       },
     } as any);
     handle.close = () => modal.Close();
+    // Steam may reset the state when the menu that opened the view closes, so
+    // it is asserted again for as long as the view is open.
+    setGameOverlay(OVERLAY_ACTIVE);
+    keepOverlay = setInterval(() => setGameOverlay(OVERLAY_ACTIVE), 1000);
     // The Steam button opens the main menu ON TOP of the view: close the view so
     // the menu is shown alone; a second press then returns to the game. Only a
     // real hidden -> visible change counts, and not while the menu that opened
