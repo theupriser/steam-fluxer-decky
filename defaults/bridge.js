@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 14;
+  const VERSION = 15;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -53,6 +53,9 @@
   const rels = () => find('rels', ['getRelationships', 'getRelationship', 'isBlocked']);
   const presence = () => find('presence', ['getStatus', 'getCustomStatus', 'isMobile']);
   const channels = () => find('channels', ['getGuildChannels', 'getPrivateChannels']);
+  // Fluxer's own voice settings (input/output device and volume, in percent).
+  const voiceSettings = () => find('voiceSettings', ['updateSettings', 'setVoiceProcessingModeForDeviceLabel']);
+  const VOLUME_MAX = 200;
 
   // The app's own authenticated HTTP client (same session, no tokens handled here).
   const httpClient = () => find('http', ['get', 'post', 'put', 'patch', 'delete']);
@@ -215,7 +218,50 @@
         check('Friends', rels),
         check('Status', presence),
         check('Messages and requests', httpClient),
+        check('Sound settings', voiceSettings),
       ];
+    },
+    // The sound devices Fluxer can use, and the ones it uses now. Device ids are
+    // the browser's (what Fluxer's own settings store); labels are for display.
+    async audio() {
+      const s = voiceSettings();
+      let devices = [];
+      try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { /* no permission: lists stay empty */ }
+      const list = (kind) => devices.filter((d) => d.kind === kind && d.deviceId)
+        .map((d) => ({ id: d.deviceId, label: d.deviceId === 'default' ? 'System default' : (d.label || d.deviceId) }));
+      return {
+        inputDeviceId: s.inputDeviceId,
+        outputDeviceId: s.outputDeviceId,
+        inputVolume: s.inputVolume,
+        outputVolume: s.outputVolume,
+        inputs: list('audioinput'),
+        outputs: list('audiooutput'),
+      };
+    },
+    // Changes Fluxer's own sound settings, the same ones as in its settings
+    // window: a running call picks them up right away. Only known devices and
+    // volumes from 0 to 200 percent are accepted.
+    async setAudio(patch) {
+      const s = voiceSettings();
+      let devices = [];
+      try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { /* validated below */ }
+      const known = (kind, id) => typeof id === 'string' && devices.some((d) => d.kind === kind && d.deviceId === id);
+      const volume = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(VOLUME_MAX, Math.round(Number(v)))) : undefined);
+      const update = {};
+      if (known('audioinput', patch.inputDeviceId)) update.inputDeviceId = patch.inputDeviceId;
+      if (known('audiooutput', patch.outputDeviceId)) update.outputDeviceId = patch.outputDeviceId;
+      if (patch.inputVolume !== undefined && volume(patch.inputVolume) !== undefined) update.inputVolume = volume(patch.inputVolume);
+      if (patch.outputVolume !== undefined && volume(patch.outputVolume) !== undefined) update.outputVolume = volume(patch.outputVolume);
+      if (!Object.keys(update).length) throw new Error('nothing valid to change');
+      s.updateSettings(update);
+      if (update.outputVolume !== undefined) {
+        // The call's own playback gain is only recomputed on request.
+        try {
+          const e = engine();
+          if (typeof e.applyAllLocalAudioPreferences === 'function') e.applyAllLocalAudioPreferences();
+        } catch { /* no call running */ }
+      }
+      return api.audio();
     },
     async friends() {
       const r = await request('get', '/users/@me/relationships');

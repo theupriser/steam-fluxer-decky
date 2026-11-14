@@ -679,6 +679,31 @@ class Plugin:
             return {"ok": False, "error": "Could not use the code field."}
         return {"ok": True, **(await self._settle(6.0))}
 
+    # --- sound devices and volume (Fluxer's own voice settings) ----------
+
+    async def get_audio_settings(self) -> dict:
+        """Fluxer's sound input/output device and volume, and the devices it can use."""
+        if not await self._cdp_up():
+            return {"ok": False, "error": "Fluxer is not running."}
+        try:
+            return {"ok": True, **(await self._bridge("audio()"))}
+        except Exception as e:
+            decky.logger.error(f"get_audio_settings failed: {e}")
+            return {"ok": False, "error": str(e)}
+
+    async def set_audio_settings(self, patch: dict) -> dict:
+        """Change any of inputDeviceId, outputDeviceId, inputVolume, outputVolume
+        (volumes are percent, 0 to 200). They are Fluxer's own settings, so the
+        desktop window shows the same values and a running call follows at once."""
+        if not await self._cdp_up():
+            return {"ok": False, "error": "Fluxer is not running."}
+        allowed = {k: patch[k] for k in ("inputDeviceId", "outputDeviceId", "inputVolume", "outputVolume") if k in patch}
+        try:
+            return {"ok": True, **(await self._bridge(f"setAudio({json.dumps(allowed)})"))}
+        except Exception as e:
+            decky.logger.error(f"set_audio_settings failed: {e}")
+            return {"ok": False, "error": str(e)}
+
     # --- plugin settings -------------------------------------------------
 
     def _settings_path(self) -> str:

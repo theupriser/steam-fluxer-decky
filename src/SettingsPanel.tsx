@@ -1,6 +1,7 @@
 import { call } from "@decky/api";
 import { Focusable } from "@decky/ui";
 import { FC, useEffect, useState } from "react";
+import { SoundSettings } from "./SoundSettings";
 import { FluxerState, refreshState, setMenuEntryEnabled } from "./state";
 import { Btn, DANGER, ONLINE, Tile } from "./ui";
 
@@ -125,6 +126,15 @@ export const SettingsPanel: FC<{ state?: FluxerState }> = ({ state }) => {
             disabled={busy}
             onChange={(v) => set({ autostart: v })}
           />
+          {ready && (
+            <>
+              <Heading>Sound</Heading>
+              <div style={{ fontSize: 11, opacity: 0.55, margin: "0 4px 2px" }}>
+                Fluxer's own sound settings: the same devices and volumes as in its desktop settings window.
+              </div>
+              <SoundSettings />
+            </>
+          )}
           <Heading>Screen share</Heading>
           <div style={{ fontSize: 11, opacity: 0.55, margin: "0 4px 8px" }}>
             Shares the whole screen, game included, from the Stream button in a call. Changing these while sharing restarts the share.
