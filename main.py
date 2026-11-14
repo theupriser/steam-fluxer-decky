@@ -203,7 +203,17 @@ class Plugin:
         return self._find_binary()[0] is not None or self._flatpak_installed()
 
     def _fluxer_command(self) -> list[str]:
-        args = ["--autostart", "--ozone-platform=x11", f"--remote-debugging-port={CDP_PORT}"]
+        args = [
+            "--autostart",
+            "--ozone-platform=x11",
+            f"--remote-debugging-port={CDP_PORT}",
+            # Hardware video decode/encode through the GPU's video engine (VCN)
+            # can fault it ("ring vcn_unified_0 timeout"); the kernel then resets
+            # the whole GPU and the screen goes black on gamescope. Fluxer's
+            # video is decoded in software instead.
+            "--disable-accelerated-video-decode",
+            "--disable-accelerated-video-encode",
+        ]
         native, managed = self._find_binary()
         # Order: native package, then the Flatpak, then the plugin's own copy.
         if native and not managed:
