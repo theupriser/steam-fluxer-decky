@@ -109,7 +109,7 @@ export const chromeHideMarkerRef = (el: HTMLDivElement | null) => {
 
 // --- building blocks -------------------------------------------------------
 
-const focusProps = (set: (v: boolean) => void) => ({
+export const focusProps = (set: (v: boolean) => void) => ({
   onFocus: () => set(true),
   onBlur: () => set(false),
   onGamepadFocus: () => set(true),
