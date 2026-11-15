@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 15;
+  const VERSION = 16;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -53,6 +53,8 @@
   const rels = () => find('rels', ['getRelationships', 'getRelationship', 'isBlocked']);
   const presence = () => find('presence', ['getStatus', 'getCustomStatus', 'isMobile']);
   const channels = () => find('channels', ['getGuildChannels', 'getPrivateChannels']);
+  // Who is connected to which voice channel (the gateway's voice states).
+  const voiceStates = () => find('voiceStates', ['getAllVoiceStatesInChannel', 'getAllVoiceStatesInGuild']);
   // Fluxer's own voice settings (input/output device and volume, in percent).
   const voiceSettings = () => find('voiceSettings', ['updateSettings', 'setVoiceProcessingModeForDeviceLabel']);
   const VOLUME_MAX = 200;
@@ -119,6 +121,38 @@
     return { dms, friends };
   };
 
+  // Voice states come as objects keyed by connection (one user can have several):
+  // collect the state objects wherever they sit, whichever container is used.
+  const collectStates = (all) => {
+    const out = [];
+    const walk = (o, depth) => {
+      if (!o || depth > 3) return;
+      if (Array.isArray(o)) { o.forEach((x) => walk(x, depth + 1)); return; }
+      if (o instanceof Map) { o.forEach((x) => walk(x, depth + 1)); return; }
+      if (typeof o !== 'object') return;
+      if (o.user_id || o.userId) { out.push(o); return; }
+      Object.values(o).forEach((x) => walk(x, depth + 1));
+    };
+    walk(all, 0);
+    return out;
+  };
+  // People in a voice channel: id, name, avatar and what they are doing. Several
+  // connections of one user count once; sorted by name.
+  const participantsOf = (states, channelId) => {
+    const seen = new Map();
+    for (const s of states) {
+      if ((s.channel_id || s.channelId) !== channelId) continue;
+      const id = s.user_id || s.userId;
+      const p = seen.get(id) || { ...person(id), mute: false, deaf: false, streaming: false, video: false };
+      p.mute = p.mute || !!(s.self_mute || s.selfMute || s.mute);
+      p.deaf = p.deaf || !!(s.self_deaf || s.selfDeaf || s.deaf);
+      p.streaming = p.streaming || !!(s.self_stream || s.selfStream);
+      p.video = p.video || !!(s.self_video || s.selfVideo);
+      seen.set(id, p);
+    }
+    return [...seen.values()].map(({ status, ...p }) => p).sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   // A confirmation modal Fluxer is showing in its (hidden) window, for example
   // "you're already connected to this voice channel from another device".
   // Nobody can answer it there, so its text and buttons are passed on.
@@ -153,6 +187,13 @@
       const part = (name, fn, fallback) => {
         try { return fn(); } catch (e) { problems.push({ part: name, error: String((e && e.message) || e) }); return fallback; }
       };
+      // Voice states of every server, read once: what each guild's channels hold.
+      const statesByGuild = part('voice participants', () => {
+        const vs = voiceStates();
+        const out = {};
+        for (const id of guilds().getGuildIds()) out[id] = collectStates(vs.getAllVoiceStatesInGuild(id));
+        return out;
+      }, {});
       const guildList = part('servers', () => {
         const g = guilds();
         const c = channels();
@@ -171,7 +212,10 @@
             name: guild && guild.name,
             icon: iconUrl(guild),
             textChannels: pick([GUILD_TEXT, GUILD_ANNOUNCEMENT]),
-            voiceChannels: pick([GUILD_VOICE]),
+            voiceChannels: pick([GUILD_VOICE]).map((ch) => ({
+              ...ch,
+              participants: participantsOf(statesByGuild[id] || [], ch.id),
+            })),
           };
         }).filter((x) => x.voiceChannels.length > 0 || x.textChannels.length > 0);
       }, []);
@@ -179,20 +223,31 @@
         const m = media();
         const v = voice();
         let channelName = null;
+        let participants = [];
         if (m.channelId) {
           const ch = channels().getChannel(m.channelId);
           channelName = ch && ch.name;
+          // A server channel's people come from its server's voice states; a
+          // call in a direct message from the channel's own.
+          let states = [];
+          try {
+            const vs = voiceStates();
+            states = collectStates(ch && ch.guildId ? vs.getAllVoiceStatesInGuild(ch.guildId) : vs.getAllVoiceStatesInChannel(null, m.channelId));
+            if (!states.length && !(ch && ch.guildId)) states = collectStates(vs.getAllVoiceStatesInChannel(m.channelId));
+          } catch { /* the people list is optional */ }
+          participants = participantsOf(states, m.channelId);
         }
         return {
           channelId: m.channelId || null,
           channelName,
+          participants,
           connected: !!m.connected,
           connecting: !!m.connecting,
           selfMute: !!v.getSelfMute(),
           selfDeaf: !!v.getSelfDeaf(),
           streaming: !!window.__fluxerDeckStream,
         };
-      }, { channelId: null, channelName: null, connected: false, connecting: false, selfMute: false, selfDeaf: false, streaming: false });
+      }, { channelId: null, channelName: null, participants: [], connected: false, connecting: false, selfMute: false, selfDeaf: false, streaming: false });
       const social_ = part('people', social, { dms: [], friends: [] });
       return {
         currentAccountKey: part('account', () => accounts().currentAccountKey, null),
@@ -219,6 +274,7 @@
         check('Status', presence),
         check('Messages and requests', httpClient),
         check('Sound settings', voiceSettings),
+        check('Who is in a voice channel', voiceStates),
       ];
     },
     // The sound devices Fluxer can use, and the ones it uses now. Device ids are

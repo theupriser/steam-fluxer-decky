@@ -19,12 +19,27 @@ export interface VoiceState {
   selfMute: boolean;
   selfDeaf: boolean;
   streaming?: boolean;
+  /** Everyone connected to the call, you included. */
+  participants?: FluxerParticipant[];
+}
+
+/** Someone connected to a voice channel, and what they are doing there. */
+export interface FluxerParticipant {
+  id: string;
+  name: string;
+  avatar?: string | null;
+  mute: boolean;
+  deaf: boolean;
+  streaming: boolean;
+  video: boolean;
 }
 
 export interface FluxerChannel {
   id: string;
   name: string;
   category: string | null;
+  /** Voice channels only: who is connected right now. */
+  participants?: FluxerParticipant[];
 }
 
 export interface FluxerGuild {
