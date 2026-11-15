@@ -444,6 +444,14 @@ class Plugin:
             decky.logger.error(f"bridge call {call.split('(')[0]} failed: {e}")
             return {"ok": False, "error": str(e)}
 
+    async def get_speaking(self) -> dict:
+        """Ids of the people talking in the call right now (polled several times a second)."""
+        try:
+            return {"ok": True, "ids": await self._bridge("speaking()")}
+        except Exception:
+            # Not in a call, or Fluxer is not up: nobody is talking.
+            return {"ok": False, "ids": []}
+
     async def get_diagnostics(self) -> dict:
         """Which features this Fluxer build still supports (settings page)."""
         if not await self._cdp_up():

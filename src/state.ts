@@ -121,6 +121,53 @@ export function useFluxerState() {
   return state;
 }
 
+// --- who is talking in the call (fast poll, only while in a call) -----------
+const SPEAK_POLL_MS = 300;
+// Fluxer's audio-level flag flips quickly between words: keep the ring on a
+// moment after the last sign of speech so it does not flicker.
+const SPEAK_HOLD_MS = 450;
+
+/** User ids talking right now. Polls only while `active` (in a call). */
+export function useSpeaking(active: boolean): Set<string> {
+  const [speaking, setSpeaking] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!active) {
+      setSpeaking((prev) => (prev.size ? new Set() : prev));
+      return;
+    }
+    const lastSeen = new Map<string, number>();
+    let stopped = false;
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const r = await call<[], { ok: boolean; ids: string[] }>("get_speaking");
+        const now = Date.now();
+        (r.ids || []).forEach((id) => lastSeen.set(id, now));
+      } catch {
+        // Keep the last picture; the hold below lets it fade out by itself.
+      }
+      busy = false;
+      if (stopped) return;
+      const now = Date.now();
+      const on: string[] = [];
+      lastSeen.forEach((t, id) => {
+        if (now - t <= SPEAK_HOLD_MS) on.push(id);
+        else lastSeen.delete(id);
+      });
+      setSpeaking((prev) => (prev.size === on.length && on.every((id) => prev.has(id)) ? prev : new Set(on)));
+    };
+    const timer = setInterval(tick, SPEAK_POLL_MS);
+    tick();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [active]);
+  return speaking;
+}
+
 // --- Steam menu entry switch (a plugin setting shared with the menu patch) ---
 const menuListeners = new Set<(v: boolean) => void>();
 let menuEntry = true;

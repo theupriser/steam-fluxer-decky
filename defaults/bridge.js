@@ -3,7 +3,7 @@
 // exposes a small API on window.__fluxerDeck. Never returns tokens or any
 // stored account data: only ids and display names.
 (() => {
-  const VERSION = 16;
+  const VERSION = 17;
   if (window.__fluxerDeck && window.__fluxerDeck.v === VERSION) return window.__fluxerDeck;
 
   const GUILD_VOICE = 2;
@@ -55,6 +55,8 @@
   const channels = () => find('channels', ['getGuildChannels', 'getPrivateChannels']);
   // Who is connected to which voice channel (the gateway's voice states).
   const voiceStates = () => find('voiceStates', ['getAllVoiceStatesInChannel', 'getAllVoiceStatesInGuild']);
+  // The people in the call you are in, live (their audio level and microphone state).
+  const callParticipants = () => find('callParticipants', ['getParticipantByUserIdAndConnectionId']);
   // Fluxer's own voice settings (input/output device and volume, in percent).
   const voiceSettings = () => find('voiceSettings', ['updateSettings', 'setVoiceProcessingModeForDeviceLabel']);
   const VOLUME_MAX = 200;
@@ -259,6 +261,16 @@
         fluxerVersion: (/Fluxer\/([\d.]+)/.exec(navigator.userAgent) || [])[1] || null,
       };
     },
+    // Ids of the people talking right now in the call. Cheap, for a fast poll:
+    // a muted microphone never counts, whatever its level says.
+    speaking() {
+      const list = Object.values(callParticipants().participants || {});
+      const ids = new Set();
+      for (const p of list) {
+        if (p && p.userId && (p.isSpeaking || p.isAudioLevelSpeaking) && p.isMicrophoneEnabled !== false) ids.add(p.userId);
+      }
+      return [...ids];
+    },
     // Which features this Fluxer build still supports, for the settings page.
     capabilities() {
       const check = (name, fn) => { try { fn(); return { name, ok: true }; } catch (e) { return { name, ok: false, error: String((e && e.message) || e) }; } };
@@ -275,6 +287,7 @@
         check('Messages and requests', httpClient),
         check('Sound settings', voiceSettings),
         check('Who is in a voice channel', voiceStates),
+        check('Who is talking', callParticipants),
       ];
     },
     // The sound devices Fluxer can use, and the ones it uses now. Device ids are

@@ -8,10 +8,10 @@ import {
 import { ChatView } from "./ChatView";
 import { FluxerLogo } from "./FluxerLogo";
 import { FriendsHub } from "./FriendsHub";
-import { AvatarStack, ParticipantList } from "./Participants";
+import { AvatarStack, CallPeople } from "./Participants";
 import { SettingsPanel } from "./SettingsPanel";
 import { SetupWizard } from "./SetupWizard";
-import { refreshState, useFluxerState } from "./state";
+import { refreshState, useFluxerState, useSpeaking } from "./state";
 import {
   Avatar, DANGER, FULL_BLEED, IconBtn, ONLINE, SIDEBAR_FIT, SidebarItem, Tile, chromeHideMarkerRef, pinTop, statusText,
 } from "./ui";
@@ -178,6 +178,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
   const needsSetup = !state?.logged_in;
   const voice = state?.voice;
   const inCall = !!voice?.channelId;
+  const speaking = useSpeaking(inCall);
   const active = state?.accounts.find((a) => a.accountKey === state.active_account) || state?.accounts[0];
   const server = (state?.guilds || []).find((g) => g.id === serverId) || null;
 
@@ -325,7 +326,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
             <Tile flex active={here} disabled={busy || here} onClick={() => joinCall(c.id)}>
               <FaVolumeUp style={{ opacity: 0.7, flexShrink: 0 }} />
               <Name sub={here ? "Connected" : c.category || undefined} subColor={here ? ONLINE : undefined}>{c.name}</Name>
-              <AvatarStack people={c.participants} />
+              <AvatarStack people={c.participants} speaking={here ? speaking : undefined} />
               <span style={{ width: 90, textAlign: "center", fontWeight: 650 }}>{here ? "In call" : "Join"}</span>
             </Tile>
           </div>
@@ -391,7 +392,7 @@ export const FluxerModal: FC<{ closeModal: () => void }> = ({ closeModal }) => {
                   <div style={{ fontSize: 13, fontWeight: 650, margin: "2px 0 8px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                     {voice?.channelName || "Call"}
                   </div>
-                  <ParticipantList people={voice?.participants} />
+                  <CallPeople people={voice?.participants} speaking={speaking} />
                   <Focusable flow-children="row" style={{ display: "flex", gap: 6 }}>
                     <IconBtn on={!!voice?.selfMute} disabled={busy} onClick={() => run("toggle_mute")}>
                       {voice?.selfMute ? <FaMicrophoneSlash /> : <FaMicrophone />}
