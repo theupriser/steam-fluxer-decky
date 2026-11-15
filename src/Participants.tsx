@@ -5,10 +5,12 @@ import { Avatar, ONLINE } from "./ui";
 const BASE_RING = "#1b1d26";
 
 // A green circle around the picture while that person talks, like in Fluxer.
-const speakingRing = (on: boolean, base: string, width = 2) => ({
+const GLOW = "rgba(35,165,90,.85)";
+const speakingRing = (on: boolean, base: string, width = 3) => ({
   border: `${width}px solid ${on ? ONLINE : base}`,
-  boxShadow: on ? `0 0 7px 1px ${ONLINE}` : "none",
-  transition: "border-color .1s ease, box-shadow .1s ease",
+  // A solid halo just outside the ring plus a wide soft glow: easy to see from the couch.
+  boxShadow: on ? `0 0 0 2px rgba(35,165,90,.45), 0 0 14px 5px ${GLOW}` : "none",
+  transition: "border-color .08s ease, box-shadow .08s ease",
 });
 
 /** Overlapping profile pictures of the people in a voice channel, for a list row. */
@@ -22,7 +24,11 @@ export const AvatarStack: FC<{ people?: FluxerParticipant[]; speaking?: Set<stri
   const shown = people.slice(0, max);
   const more = people.length - shown.length;
   return (
-    <span style={{ display: "flex", alignItems: "center", flexShrink: 0, marginRight: 10 }} title={people.map((p) => p.name).join(", ")}>
+    // Padding gives the glow room; the negative margin keeps the row height.
+    <span
+      style={{ display: "flex", alignItems: "center", flexShrink: 0, padding: "8px 10px 8px 8px", margin: "-8px 2px -8px -8px" }}
+      title={people.map((p) => p.name).join(", ")}
+    >
       {shown.map((p, i) => {
         const talking = !!speaking?.has(p.id);
         return (
@@ -71,11 +77,11 @@ export const AvatarStack: FC<{ people?: FluxerParticipant[]; speaking?: Set<stri
 export const CallPeople: FC<{ people?: FluxerParticipant[]; speaking?: Set<string>; size?: number }> = ({ people, speaking, size = 30 }) => {
   if (!people || people.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "2px 0 10px" }} title={people.map((p) => p.name).join(", ")}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, padding: 8, margin: "-2px -8px 2px -8px" }} title={people.map((p) => p.name).join(", ")}>
       {people.map((p) => (
         <span
           key={p.id}
-          style={{ borderRadius: "50%", display: "flex", opacity: p.deaf ? 0.55 : 1, ...speakingRing(!!speaking?.has(p.id), "transparent", 2.5) }}
+          style={{ borderRadius: "50%", display: "flex", opacity: p.deaf ? 0.55 : 1, ...speakingRing(!!speaking?.has(p.id), "transparent") }}
         >
           <Avatar name={p.name} src={p.avatar} size={size} />
         </span>
