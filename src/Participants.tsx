@@ -1,16 +1,16 @@
 import { FC } from "react";
 import { FluxerParticipant } from "./state";
-import { Avatar, ONLINE } from "./ui";
+import { Avatar } from "./ui";
 
 const BASE_RING = "#1b1d26";
 
 // A green circle around the picture while that person talks, like in Fluxer.
-// A crisp solid ring, no glow: 3px green stroke with a 2px gap to the picture.
-// The gap and stroke are always there (only the colour changes), so nothing
+// Like Fluxer: a thick solid green ring right against the picture, no glow and
+// no gap. The stroke is always there (only its colour changes), so nothing
 // moves when someone starts or stops talking.
-const speakingRing = (on: boolean, base: string, width = 3) => ({
-  padding: 2,
-  border: `${width}px solid ${on ? ONLINE : base}`,
+const SPEAK_GREEN = "#4cc764";
+const speakingRing = (on: boolean, base: string, width = 4) => ({
+  border: `${width}px solid ${on ? SPEAK_GREEN : base}`,
   boxShadow: "none",
   transition: "border-color .08s ease",
 });
